@@ -21,17 +21,20 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             return
         }
 
-        val smsHistoryDb = SmsHistoryDatabase(applicationContext)
         val smsResult = sendSmsSafely(payload.phoneNumber, payload.message)
-        val historyRowId = smsHistoryDb.insertSmsHistory(
-            phoneNumber = payload.phoneNumber,
-            message = payload.message,
-            smsSuccess = smsResult.success,
-            smsError = smsResult.error,
-            callbackUrl = payload.callback.takeIf { it.isNotBlank() }
-        )
+        val historyRowId = SmsHistoryDatabase(applicationContext).run {
+            val rowId = insertSmsHistory(
+                phoneNumber = payload.phoneNumber,
+                message = payload.message,
+                smsSuccess = smsResult.success,
+                smsError = smsResult.error,
+                callbackUrl = payload.callback
+            )
+            close()
+            rowId
+        }
 
-        triggerCallbackSafely(payload.callback, smsHistoryDb, historyRowId)
+        triggerCallbackSafely(payload.callback, historyRowId)
     }
 
     private fun sendSmsSafely(destinationPhoneNumber: String, message: String): SendSmsResult {
@@ -62,21 +65,24 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     private fun triggerCallbackSafely(
         callbackUrl: String?,
-        smsHistoryDb: SmsHistoryDatabase,
         rowId: Long
     ) {
         if (callbackUrl.isNullOrBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
-            smsHistoryDb.updateCallbackResult(
-                rowId = rowId,
-                callbackSuccess = false,
-                callbackError = "Invalid callback URL."
-            )
+            SmsHistoryDatabase(applicationContext).run {
+                updateCallbackResult(
+                    rowId = rowId,
+                    callbackSuccess = false,
+                    callbackError = "Invalid callback URL."
+                )
+                close()
+            }
             return
         }
 
         callbackExecutor.execute {
+            val smsHistoryDb = SmsHistoryDatabase(applicationContext)
             runCatching {
                 val endpoint = URL(callbackUrl)
                 val connection = endpoint.openConnection() as HttpURLConnection
@@ -96,6 +102,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                     callbackSuccess = false,
                     callbackError = it.message ?: "Failed to call callback URL."
                 )
+            }.also {
+                smsHistoryDb.close()
             }
         }
     }

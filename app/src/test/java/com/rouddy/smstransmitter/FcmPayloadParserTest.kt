@@ -59,4 +59,17 @@ class FcmPayloadParserTest {
         assertEquals("hello sms", payload.message)
         assertEquals("https://example.com/callback", payload.callback)
     }
+
+    @Test
+    fun `returns null callback when callback is missing`() {
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "phoneNumber" to "01012345678",
+                "message" to "hello sms"
+            )
+        )
+
+        requireNotNull(payload)
+        assertNull(payload.callback)
+    }
 }

@@ -3,7 +3,7 @@ package com.rouddy.smstransmitter
 data class FcmPayload(
     val phoneNumber: String,
     val message: String,
-    val callback: String
+    val callback: String?
 )
 
 object FcmPayloadParser {
@@ -18,7 +18,7 @@ object FcmPayloadParser {
         val message = data[KEY_MESSAGE]?.trim().orEmpty()
         if (message.isBlank()) return null
 
-        val callback = data[KEY_CALLBACK]?.trim().orEmpty()
+        val callback = data[KEY_CALLBACK]?.trim()?.takeIf { it.isNotBlank() }
         return FcmPayload(phoneNumber = phoneNumber, message = message, callback = callback)
     }
 }
