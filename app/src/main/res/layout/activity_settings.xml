@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:labelFor="@id/input_daily_limit"
+        android:text="@string/daily_limit_label" />
+
+    <EditText
+        android:id="@+id/input_daily_limit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:contentDescription="@string/daily_limit_label"
+        android:hint="@string/daily_limit_hint"
+        android:inputType="number" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:labelFor="@id/input_monthly_limit"
+        android:text="@string/monthly_limit_label" />
+
+    <EditText
+        android:id="@+id/input_monthly_limit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:contentDescription="@string/monthly_limit_label"
+        android:hint="@string/monthly_limit_hint"
+        android:inputType="number" />
+
+    <Button
+        android:id="@+id/button_save_limits"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="@string/save" />
+</LinearLayout>

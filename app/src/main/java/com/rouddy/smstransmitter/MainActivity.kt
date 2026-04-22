@@ -1,8 +1,11 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,8 +16,10 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+    private lateinit var remainingCountView: TextView
     private lateinit var historyContentView: TextView
     private lateinit var smsHistoryDb: SmsHistoryDatabase
+    private lateinit var smsLimitSettings: SmsLimitSettings
     private val historyDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private val permissionLauncher =
@@ -28,7 +33,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        smsLimitSettings = SmsLimitSettings(this)
         smsHistoryDb = SmsHistoryDatabase(this)
+        remainingCountView = findViewById(R.id.remaining_count_content)
         historyContentView = findViewById(R.id.history_content)
 
         ensureSmsPermission()
@@ -45,6 +52,22 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_settings -> {
+                startActivity(Intent(this, SettingsActivity::class.java))
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
     private fun ensureSmsPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) !=
             PackageManager.PERMISSION_GRANTED
@@ -54,6 +77,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderHistory() {
+        renderRemainingCounts()
+
         val histories = smsHistoryDb.getRecentSmsHistories()
         if (histories.isEmpty()) {
             historyContentView.text = getString(R.string.no_history)
@@ -84,5 +109,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
         historyContentView.text = content
+    }
+
+    private fun renderRemainingCounts() {
+        val now = System.currentTimeMillis()
+        val config = smsLimitSettings.getConfig()
+
+        val todaySentCount = smsHistoryDb.countSuccessfulSmsBetween(
+            SmsLimitSettings.getStartOfTodayMillis(now),
+            SmsLimitSettings.getStartOfNextDayMillis(now)
+        )
+        val monthSentCount = smsHistoryDb.countSuccessfulSmsBetween(
+            SmsLimitSettings.getStartOfMonthMillis(now),
+            SmsLimitSettings.getStartOfNextMonthMillis(now)
+        )
+
+        val dailyRemainingText = formatRemainingText(config.dailyLimit, todaySentCount)
+        val monthlyRemainingText = formatRemainingText(config.monthlyLimit, monthSentCount)
+
+        remainingCountView.text = getString(
+            R.string.remaining_sms_counts,
+            dailyRemainingText,
+            monthlyRemainingText
+        )
+    }
+
+    private fun formatRemainingText(limit: Int?, sentCount: Int): String {
+        return limit?.let { (it - sentCount).coerceAtLeast(0).toString() }
+            ?: getString(R.string.unlimited)
     }
 }

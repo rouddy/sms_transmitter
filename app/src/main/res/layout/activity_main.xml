@@ -12,6 +12,13 @@
         android:text="@string/history_title"
         android:textStyle="bold" />
 
+    <TextView
+        android:id="@+id/remaining_count_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="@string/default_remaining_sms_counts" />
+
     <ScrollView
         android:layout_marginTop="12dp"
         android:layout_width="match_parent"
