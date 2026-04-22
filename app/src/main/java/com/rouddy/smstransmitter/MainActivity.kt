@@ -74,7 +74,7 @@ class MainActivity : AppCompatActivity() {
                 if (!item.smsError.isNullOrBlank()) append(" (${item.smsError})")
                 append("\n")
                 append("Callback: $callbackStatus")
-                if (!item.callbackUrl.isBlank()) append(" [${item.callbackUrl}]")
+                if (!item.callbackUrl.isNullOrBlank()) append(" [${item.callbackUrl}]")
                 if (!item.callbackError.isNullOrBlank()) append(" (${item.callbackError})")
             }
         }

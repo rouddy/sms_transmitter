@@ -12,26 +12,14 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     DATABASE_VERSION
 ) {
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE $TABLE_SMS_HISTORY (
-                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                $COLUMN_CREATED_AT INTEGER NOT NULL,
-                $COLUMN_PHONE_NUMBER TEXT NOT NULL,
-                $COLUMN_MESSAGE TEXT NOT NULL,
-                $COLUMN_SMS_SUCCESS INTEGER NOT NULL,
-                $COLUMN_SMS_ERROR TEXT,
-                $COLUMN_CALLBACK_URL TEXT,
-                $COLUMN_CALLBACK_SUCCESS INTEGER,
-                $COLUMN_CALLBACK_ERROR TEXT
-            )
-            """.trimIndent()
-        )
+        createSmsHistoryTableIfNotExists(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        db.execSQL("DROP TABLE IF EXISTS $TABLE_SMS_HISTORY")
-        onCreate(db)
+        if (oldVersion < 2) {
+            addColumnIfMissing(db, TABLE_SMS_HISTORY, COLUMN_CALLBACK_ERROR, "TEXT")
+        }
+        createSmsHistoryTableIfNotExists(db)
     }
 
     fun insertSmsHistory(
@@ -86,7 +74,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
                     message = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_MESSAGE)),
                     smsSuccess = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_SMS_SUCCESS)) == 1,
                     smsError = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_SMS_ERROR)),
-                    callbackUrl = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_CALLBACK_URL)).orEmpty(),
+                    callbackUrl = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_CALLBACK_URL)),
                     callbackSuccess = if (cursor.isNull(callbackSuccessIndex)) {
                         null
                     } else {
@@ -101,7 +89,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val DATABASE_NAME = "sms_history.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
 
         private const val TABLE_SMS_HISTORY = "sms_history"
         private const val COLUMN_ID = "id"
@@ -114,6 +102,45 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         private const val COLUMN_CALLBACK_SUCCESS = "callback_success"
         private const val COLUMN_CALLBACK_ERROR = "callback_error"
     }
+
+    private fun createSmsHistoryTableIfNotExists(db: SQLiteDatabase) {
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS $TABLE_SMS_HISTORY (
+                $COLUMN_ID INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COLUMN_CREATED_AT INTEGER NOT NULL,
+                $COLUMN_PHONE_NUMBER TEXT NOT NULL,
+                $COLUMN_MESSAGE TEXT NOT NULL,
+                $COLUMN_SMS_SUCCESS INTEGER NOT NULL,
+                $COLUMN_SMS_ERROR TEXT,
+                $COLUMN_CALLBACK_URL TEXT,
+                $COLUMN_CALLBACK_SUCCESS INTEGER,
+                $COLUMN_CALLBACK_ERROR TEXT
+            )
+            """.trimIndent()
+        )
+    }
+
+    private fun addColumnIfMissing(
+        db: SQLiteDatabase,
+        tableName: String,
+        columnName: String,
+        columnType: String
+    ) {
+        val exists = db.rawQuery("PRAGMA table_info($tableName)", null).use { cursor ->
+            var found = false
+            while (cursor.moveToNext()) {
+                if (cursor.getString(cursor.getColumnIndexOrThrow("name")) == columnName) {
+                    found = true
+                    break
+                }
+            }
+            found
+        }
+        if (!exists) {
+            db.execSQL("ALTER TABLE $tableName ADD COLUMN $columnName $columnType")
+        }
+    }
 }
 
 data class SmsHistoryItem(
@@ -122,7 +149,7 @@ data class SmsHistoryItem(
     val message: String,
     val smsSuccess: Boolean,
     val smsError: String?,
-    val callbackUrl: String,
+    val callbackUrl: String?,
     val callbackSuccess: Boolean?,
     val callbackError: String?
 )
