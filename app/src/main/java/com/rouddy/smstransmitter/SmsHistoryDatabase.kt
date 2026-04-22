@@ -16,10 +16,15 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        createSmsHistoryTableIfNotExists(db)
+
+        if (!tableExists(db, TABLE_SMS_HISTORY)) {
+            return
+        }
+
         if (oldVersion < 2) {
             addColumnIfMissing(db, TABLE_SMS_HISTORY, COLUMN_CALLBACK_ERROR, "TEXT")
         }
-        createSmsHistoryTableIfNotExists(db)
     }
 
     fun insertSmsHistory(
@@ -139,6 +144,15 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         }
         if (!exists) {
             db.execSQL("ALTER TABLE $tableName ADD COLUMN $columnName $columnType")
+        }
+    }
+
+    private fun tableExists(db: SQLiteDatabase, tableName: String): Boolean {
+        return db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            arrayOf(tableName)
+        ).use { cursor ->
+            cursor.moveToFirst()
         }
     }
 }

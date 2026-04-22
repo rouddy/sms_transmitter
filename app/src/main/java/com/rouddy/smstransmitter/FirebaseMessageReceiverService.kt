@@ -85,28 +85,36 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         callbackExecutor.execute {
-            val smsHistoryDb = SmsHistoryDatabase(applicationContext)
-            runCatching {
-                val endpoint = URL(callbackUrl)
-                val connection = endpoint.openConnection() as HttpURLConnection
-                try {
-                    connection.requestMethod = "GET"
-                    connection.connectTimeout = 5_000
-                    connection.readTimeout = 5_000
-                    connection.inputStream.buffered().use { it.readBytes() }
-                } finally {
-                    connection.disconnect()
+            val historyDb = try {
+                SmsHistoryDatabase(applicationContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open SMS history DB for callback logging.", e)
+                return@execute
+            }
+
+            try {
+                runCatching {
+                    val endpoint = URL(callbackUrl)
+                    val connection = endpoint.openConnection() as HttpURLConnection
+                    try {
+                        connection.requestMethod = "GET"
+                        connection.connectTimeout = 5_000
+                        connection.readTimeout = 5_000
+                        connection.inputStream.buffered().use { it.readBytes() }
+                    } finally {
+                        connection.disconnect()
+                    }
+                    historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
+                }.onFailure {
+                    Log.e(TAG, "Failed to call callback URL.", it)
+                    historyDb.updateCallbackResult(
+                        rowId = rowId,
+                        callbackSuccess = false,
+                        callbackError = it.message ?: "Failed to call callback URL."
+                    )
                 }
-                smsHistoryDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
-            }.onFailure {
-                Log.e(TAG, "Failed to call callback URL.", it)
-                smsHistoryDb.updateCallbackResult(
-                    rowId = rowId,
-                    callbackSuccess = false,
-                    callbackError = it.message ?: "Failed to call callback URL."
-                )
-            }.also {
-                smsHistoryDb.close()
+            } finally {
+                historyDb.close()
             }
         }
     }
