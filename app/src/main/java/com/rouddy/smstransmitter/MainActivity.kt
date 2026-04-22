@@ -15,6 +15,7 @@ import java.util.Locale
 class MainActivity : AppCompatActivity() {
     private lateinit var historyContentView: TextView
     private lateinit var smsHistoryDb: SmsHistoryDatabase
+    private val historyDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -59,7 +60,6 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
         val content = histories.joinToString(separator = "\n\n") { item ->
             val smsStatus = if (item.smsSuccess) {
                 getString(R.string.sms_success)
@@ -72,7 +72,7 @@ class MainActivity : AppCompatActivity() {
                 null -> getString(R.string.callback_pending)
             }
             buildString {
-                append("시간: ${formatter.format(Date(item.createdAtMillis))}\n")
+                append("시간: ${historyDateFormatter.format(Date(item.createdAtMillis))}\n")
                 append("수신번호: ${item.phoneNumber}\n")
                 append("메시지: ${item.message}\n")
                 append("SMS: $smsStatus")
