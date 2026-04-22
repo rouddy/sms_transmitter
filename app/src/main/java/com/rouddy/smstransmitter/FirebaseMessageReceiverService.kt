@@ -28,7 +28,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             message = payload.message,
             smsSuccess = smsResult.success,
             smsError = smsResult.error,
-            callbackUrl = payload.callback
+            callbackUrl = payload.callback.takeIf { it.isNotBlank() }
         )
 
         triggerCallbackSafely(payload.callback, smsHistoryDb, historyRowId)
@@ -60,8 +60,12 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
     }
 
-    private fun triggerCallbackSafely(callbackUrl: String, smsHistoryDb: SmsHistoryDatabase, rowId: Long) {
-        if (callbackUrl.isBlank()) return
+    private fun triggerCallbackSafely(
+        callbackUrl: String?,
+        smsHistoryDb: SmsHistoryDatabase,
+        rowId: Long
+    ) {
+        if (callbackUrl.isNullOrBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
             smsHistoryDb.updateCallbackResult(

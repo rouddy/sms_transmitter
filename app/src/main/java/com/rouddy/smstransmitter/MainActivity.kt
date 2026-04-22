@@ -39,6 +39,11 @@ class MainActivity : AppCompatActivity() {
         renderHistory()
     }
 
+    override fun onDestroy() {
+        smsHistoryDb.close()
+        super.onDestroy()
+    }
+
     private fun ensureSmsPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) !=
             PackageManager.PERMISSION_GRANTED

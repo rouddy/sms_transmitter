@@ -27,7 +27,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         message: String,
         smsSuccess: Boolean,
         smsError: String?,
-        callbackUrl: String
+        callbackUrl: String?
     ): Long {
         val values = ContentValues().apply {
             put(COLUMN_CREATED_AT, System.currentTimeMillis())
