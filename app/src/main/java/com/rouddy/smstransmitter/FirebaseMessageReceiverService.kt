@@ -1,7 +1,6 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.telephony.SmsManager
 import android.util.Log
@@ -18,27 +17,31 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = FcmPayloadParser.parse(remoteMessage.data)
         if (payload == null) {
-            Log.w(TAG, "Missing or empty 'message' in FCM data payload.")
+            Log.w(TAG, "Missing or empty 'phoneNumber'/'message' in FCM data payload.")
             return
         }
 
-        val phoneNumber = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(MainActivity.KEY_PHONE_NUMBER, "")
-            .orEmpty()
-            .trim()
+        val smsHistoryDb = SmsHistoryDatabase(applicationContext)
+        val smsResult = sendSmsSafely(payload.phoneNumber, payload.message)
+        val historyRowId = smsHistoryDb.insertSmsHistory(
+            phoneNumber = payload.phoneNumber,
+            message = payload.message,
+            smsSuccess = smsResult.success,
+            smsError = smsResult.error,
+            callbackUrl = payload.callback
+        )
 
-        sendSmsSafely(phoneNumber, payload.message)
-        triggerCallbackSafely(payload.callback)
+        triggerCallbackSafely(payload.callback, smsHistoryDb, historyRowId)
     }
 
-    private fun sendSmsSafely(destinationPhoneNumber: String, message: String): Boolean {
+    private fun sendSmsSafely(destinationPhoneNumber: String, message: String): SendSmsResult {
         if (destinationPhoneNumber.isBlank()) {
             Log.w(TAG, "Destination phone number is not configured.")
-            return false
+            return SendSmsResult(success = false, error = "Destination phone number is empty.")
         }
         if (!hasSmsPermission()) {
             Log.w(TAG, "SEND_SMS permission not granted.")
-            return false
+            return SendSmsResult(success = false, error = "SEND_SMS permission not granted.")
         }
 
         return runCatching {
@@ -49,16 +52,23 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             } else {
                 smsManager.sendTextMessage(destinationPhoneNumber, null, message, null, null)
             }
-            true
+            SendSmsResult(success = true, error = null)
         }.onFailure {
             Log.e(TAG, "Failed to send SMS.", it)
-        }.getOrDefault(false)
+        }.getOrElse {
+            SendSmsResult(success = false, error = it.message ?: "Failed to send SMS.")
+        }
     }
 
-    private fun triggerCallbackSafely(callbackUrl: String) {
+    private fun triggerCallbackSafely(callbackUrl: String, smsHistoryDb: SmsHistoryDatabase, rowId: Long) {
         if (callbackUrl.isBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
+            smsHistoryDb.updateCallbackResult(
+                rowId = rowId,
+                callbackSuccess = false,
+                callbackError = "Invalid callback URL."
+            )
             return
         }
 
@@ -74,8 +84,14 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 } finally {
                     connection.disconnect()
                 }
+                smsHistoryDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
             }.onFailure {
                 Log.e(TAG, "Failed to call callback URL.", it)
+                smsHistoryDb.updateCallbackResult(
+                    rowId = rowId,
+                    callbackSuccess = false,
+                    callbackError = it.message ?: "Failed to call callback URL."
+                )
             }
         }
     }
@@ -97,3 +113,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         private val callbackExecutor: ExecutorService = Executors.newCachedThreadPool()
     }
 }
+
+private data class SendSmsResult(
+    val success: Boolean,
+    val error: String?
+)

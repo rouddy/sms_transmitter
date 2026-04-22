@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SMS Transmitter</string>
-    <string name="setup_description">FCM data message의 message 값을 SMS로 발송하기 위한 수신 번호를 입력하세요.</string>
-    <string name="phone_number_hint">SMS 수신 번호</string>
-    <string name="save">저장</string>
-    <string name="phone_number_saved">수신 번호가 저장되었습니다.</string>
-    <string name="invalid_phone_number">올바른 전화번호 형식이 아닙니다.</string>
+    <string name="history_title">SMS 전송 이력</string>
+    <string name="no_history">아직 저장된 전송 이력이 없습니다.</string>
+    <string name="sms_success">성공</string>
+    <string name="sms_failure">실패</string>
+    <string name="callback_pending">미실행</string>
     <string name="sms_permission_required">SMS 발송 권한이 필요합니다.</string>
 </resources>

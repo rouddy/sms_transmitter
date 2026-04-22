@@ -1,18 +1,21 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Patterns
-import android.widget.Button
-import android.widget.EditText
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
+    private lateinit var historyContentView: TextView
+    private lateinit var smsHistoryDb: SmsHistoryDatabase
+
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             if (!granted) {
@@ -24,21 +27,16 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        smsHistoryDb = SmsHistoryDatabase(this)
+        historyContentView = findViewById(R.id.history_content)
+
         ensureSmsPermission()
+        renderHistory()
+    }
 
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val numberInput = findViewById<EditText>(R.id.phone_number_input)
-        numberInput.setText(prefs.getString(KEY_PHONE_NUMBER, ""))
-
-        findViewById<Button>(R.id.save_button).setOnClickListener {
-            val phoneNumber = numberInput.text.toString().trim()
-            if (phoneNumber.isEmpty() || !Patterns.PHONE.matcher(phoneNumber).matches()) {
-                Toast.makeText(this, R.string.invalid_phone_number, Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            prefs.edit().putString(KEY_PHONE_NUMBER, phoneNumber).apply()
-            Toast.makeText(this, R.string.phone_number_saved, Toast.LENGTH_SHORT).show()
-        }
+    override fun onResume() {
+        super.onResume()
+        renderHistory()
     }
 
     private fun ensureSmsPermission() {
@@ -49,8 +47,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    companion object {
-        const val PREFS_NAME = "sms_transmitter_prefs"
-        const val KEY_PHONE_NUMBER = "phone_number"
+    private fun renderHistory() {
+        val histories = smsHistoryDb.getRecentSmsHistories()
+        if (histories.isEmpty()) {
+            historyContentView.text = getString(R.string.no_history)
+            return
+        }
+
+        val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val content = histories.joinToString(separator = "\n\n") { item ->
+            val smsStatus = if (item.smsSuccess) {
+                getString(R.string.sms_success)
+            } else {
+                getString(R.string.sms_failure)
+            }
+            val callbackStatus = when (item.callbackSuccess) {
+                true -> getString(R.string.sms_success)
+                false -> getString(R.string.sms_failure)
+                null -> getString(R.string.callback_pending)
+            }
+            buildString {
+                append("시간: ${formatter.format(Date(item.createdAtMillis))}\n")
+                append("수신번호: ${item.phoneNumber}\n")
+                append("메시지: ${item.message}\n")
+                append("SMS: $smsStatus")
+                if (!item.smsError.isNullOrBlank()) append(" (${item.smsError})")
+                append("\n")
+                append("Callback: $callbackStatus")
+                if (!item.callbackUrl.isBlank()) append(" [${item.callbackUrl}]")
+                if (!item.callbackError.isNullOrBlank()) append(" (${item.callbackError})")
+            }
+        }
+        historyContentView.text = content
     }
 }

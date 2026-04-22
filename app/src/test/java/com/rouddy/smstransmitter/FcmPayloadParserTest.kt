@@ -6,14 +6,41 @@ import org.junit.Test
 
 class FcmPayloadParserTest {
     @Test
+    fun `returns null when phoneNumber is missing`() {
+        val payload = FcmPayloadParser.parse(mapOf("message" to "hello"))
+        assertNull(payload)
+    }
+
+    @Test
+    fun `returns null when phoneNumber is blank`() {
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "phoneNumber" to " ",
+                "message" to "hello"
+            )
+        )
+        assertNull(payload)
+    }
+
+    @Test
     fun `returns null when message is missing`() {
-        val payload = FcmPayloadParser.parse(mapOf("callback" to "https://example.com"))
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "phoneNumber" to "01012345678",
+                "callback" to "https://example.com"
+            )
+        )
         assertNull(payload)
     }
 
     @Test
     fun `returns null when message is blank`() {
-        val payload = FcmPayloadParser.parse(mapOf("message" to "   "))
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "phoneNumber" to "01012345678",
+                "message" to "   "
+            )
+        )
         assertNull(payload)
     }
 
@@ -21,12 +48,14 @@ class FcmPayloadParserTest {
     fun `returns parsed payload when message exists`() {
         val payload = FcmPayloadParser.parse(
             mapOf(
+                "phoneNumber" to "  01012345678  ",
                 "message" to "  hello sms  ",
                 "callback" to " https://example.com/callback "
             )
         )
 
         requireNotNull(payload)
+        assertEquals("01012345678", payload.phoneNumber)
         assertEquals("hello sms", payload.message)
         assertEquals("https://example.com/callback", payload.callback)
     }

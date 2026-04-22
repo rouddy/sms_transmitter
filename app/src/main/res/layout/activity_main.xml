@@ -6,26 +6,24 @@
     android:padding="24dp">
 
     <TextView
-        android:id="@+id/phone_number_label"
+        android:id="@+id/history_title"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:labelFor="@id/phone_number_input"
-        android:text="@string/setup_description" />
+        android:text="@string/history_title"
+        android:textStyle="bold" />
 
-    <EditText
-        android:id="@+id/phone_number_input"
+    <ScrollView
+        android:layout_marginTop="12dp"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="@string/phone_number_hint"
-        android:importantForAccessibility="yes"
-        android:inputType="phone"
-        android:layout_marginTop="16dp" />
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-    <Button
-        android:id="@+id/save_button"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/save"
-        android:layout_marginTop="12dp" />
+        <TextView
+            android:id="@+id/history_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/no_history"
+            android:textIsSelectable="true" />
+    </ScrollView>
 
 </LinearLayout>
