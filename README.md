@@ -21,3 +21,4 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
 
 - 앱 실행 후 SMS 수신 번호를 입력하고 저장
 - `SEND_SMS` 권한 허용
+- Firebase Console에서 발급한 `google-services.json` 파일을 `app/google-services.json` 경로에 추가

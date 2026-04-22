@@ -6,8 +6,10 @@
     android:padding="24dp">
 
     <TextView
+        android:id="@+id/phone_number_label"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:labelFor="@id/phone_number_input"
         android:text="@string/setup_description" />
 
     <EditText
@@ -15,6 +17,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="@string/phone_number_hint"
+        android:importantForAccessibility="yes"
         android:inputType="phone"
         android:layout_marginTop="16dp" />
 

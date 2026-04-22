@@ -11,6 +11,8 @@ import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -25,8 +27,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             .orEmpty()
             .trim()
 
-        val smsSent = sendSmsSafely(phoneNumber, payload.message)
-        triggerCallbackSafely(payload.callback, smsSent)
+        sendSmsSafely(phoneNumber, payload.message)
+        triggerCallbackSafely(payload.callback)
     }
 
     private fun sendSmsSafely(destinationPhoneNumber: String, message: String): Boolean {
@@ -40,23 +42,29 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         return runCatching {
-            SmsManager.getDefault().sendTextMessage(destinationPhoneNumber, null, message, null, null)
+            val smsManager = SmsManager.getDefault()
+            val messageParts = smsManager.divideMessage(message)
+            if (messageParts.size > 1) {
+                smsManager.sendMultipartTextMessage(destinationPhoneNumber, null, messageParts, null, null)
+            } else {
+                smsManager.sendTextMessage(destinationPhoneNumber, null, message, null, null)
+            }
             true
         }.onFailure {
             Log.e(TAG, "Failed to send SMS.", it)
         }.getOrDefault(false)
     }
 
-    private fun triggerCallbackSafely(callbackUrl: String, smsSent: Boolean) {
+    private fun triggerCallbackSafely(callbackUrl: String) {
         if (callbackUrl.isBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
             return
         }
 
-        Thread {
+        callbackExecutor.execute {
             runCatching {
-                val endpoint = URL("$callbackUrl${if (callbackUrl.contains("?")) "&" else "?"}status=${if (smsSent) "sent" else "failed"}")
+                val endpoint = URL(callbackUrl)
                 val connection = endpoint.openConnection() as HttpURLConnection
                 try {
                     connection.requestMethod = "GET"
@@ -69,7 +77,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             }.onFailure {
                 Log.e(TAG, "Failed to call callback URL.", it)
             }
-        }.start()
+        }
     }
 
     private fun hasSmsPermission(): Boolean {
@@ -86,5 +94,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "FirebaseSmsService"
+        private val callbackExecutor: ExecutorService = Executors.newCachedThreadPool()
     }
 }

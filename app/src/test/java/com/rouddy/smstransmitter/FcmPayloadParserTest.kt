@@ -12,6 +12,12 @@ class FcmPayloadParserTest {
     }
 
     @Test
+    fun `returns null when message is blank`() {
+        val payload = FcmPayloadParser.parse(mapOf("message" to "   "))
+        assertNull(payload)
+    }
+
+    @Test
     fun `returns parsed payload when message exists`() {
         val payload = FcmPayloadParser.parse(
             mapOf(

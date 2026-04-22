@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Patterns
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
@@ -31,6 +32,10 @@ class MainActivity : AppCompatActivity() {
 
         findViewById<Button>(R.id.save_button).setOnClickListener {
             val phoneNumber = numberInput.text.toString().trim()
+            if (phoneNumber.isEmpty() || !Patterns.PHONE.matcher(phoneNumber).matches()) {
+                Toast.makeText(this, R.string.invalid_phone_number, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
             prefs.edit().putString(KEY_PHONE_NUMBER, phoneNumber).apply()
             Toast.makeText(this, R.string.phone_number_saved, Toast.LENGTH_SHORT).show()
         }
