@@ -22,16 +22,17 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         val smsResult = sendSmsSafely(payload.phoneNumber, payload.message)
-        val historyRowId = SmsHistoryDatabase(applicationContext).run {
-            val rowId = insertSmsHistory(
+        val historyDb = SmsHistoryDatabase(applicationContext)
+        val historyRowId = try {
+            historyDb.insertSmsHistory(
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
                 smsSuccess = smsResult.success,
                 smsError = smsResult.error,
                 callbackUrl = payload.callback
             )
-            close()
-            rowId
+        } finally {
+            historyDb.close()
         }
 
         triggerCallbackSafely(payload.callback, historyRowId)
@@ -70,13 +71,15 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         if (callbackUrl.isNullOrBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
-            SmsHistoryDatabase(applicationContext).run {
-                updateCallbackResult(
+            val historyDb = SmsHistoryDatabase(applicationContext)
+            try {
+                historyDb.updateCallbackResult(
                     rowId = rowId,
                     callbackSuccess = false,
                     callbackError = "Invalid callback URL."
                 )
-                close()
+            } finally {
+                historyDb.close()
             }
             return
         }

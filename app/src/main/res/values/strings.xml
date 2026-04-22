@@ -5,6 +5,8 @@
     <string name="no_history">아직 저장된 전송 이력이 없습니다.</string>
     <string name="sms_success">성공</string>
     <string name="sms_failure">실패</string>
+    <string name="callback_success">성공</string>
+    <string name="callback_failure">실패</string>
     <string name="callback_pending">미실행</string>
     <string name="sms_permission_required">SMS 발송 권한이 필요합니다.</string>
 </resources>

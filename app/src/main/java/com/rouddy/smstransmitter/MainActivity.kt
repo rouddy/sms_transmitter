@@ -67,8 +67,8 @@ class MainActivity : AppCompatActivity() {
                 getString(R.string.sms_failure)
             }
             val callbackStatus = when (item.callbackSuccess) {
-                true -> getString(R.string.sms_success)
-                false -> getString(R.string.sms_failure)
+                true -> getString(R.string.callback_success)
+                false -> getString(R.string.callback_failure)
                 null -> getString(R.string.callback_pending)
             }
             buildString {
