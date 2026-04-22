@@ -124,15 +124,18 @@ class MainActivity : AppCompatActivity() {
             SmsLimitSettings.getStartOfNextMonthMillis(now)
         )
 
-        val dailyRemainingText = config.dailyLimit?.let { (it - todaySentCount).coerceAtLeast(0).toString() }
-            ?: getString(R.string.unlimited)
-        val monthlyRemainingText = config.monthlyLimit?.let { (it - monthSentCount).coerceAtLeast(0).toString() }
-            ?: getString(R.string.unlimited)
+        val dailyRemainingText = formatRemainingText(config.dailyLimit, todaySentCount)
+        val monthlyRemainingText = formatRemainingText(config.monthlyLimit, monthSentCount)
 
         remainingCountView.text = getString(
             R.string.remaining_sms_counts,
             dailyRemainingText,
             monthlyRemainingText
         )
+    }
+
+    private fun formatRemainingText(limit: Int?, sentCount: Int): String {
+        return limit?.let { (it - sentCount).coerceAtLeast(0).toString() }
+            ?: getString(R.string.unlimited)
     }
 }
