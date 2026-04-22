@@ -21,9 +21,9 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             return
         }
 
-        val smsResult = sendSmsSafely(payload.phoneNumber, payload.message)
         val historyDb = SmsHistoryDatabase(applicationContext)
         val historyRowId = try {
+            val smsResult = sendSmsSafely(payload.phoneNumber, payload.message, historyDb)
             historyDb.insertSmsHistory(
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
@@ -38,7 +38,11 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         triggerCallbackSafely(payload.callback, historyRowId)
     }
 
-    private fun sendSmsSafely(destinationPhoneNumber: String, message: String): SendSmsResult {
+    private fun sendSmsSafely(
+        destinationPhoneNumber: String,
+        message: String,
+        historyDb: SmsHistoryDatabase
+    ): SendSmsResult {
         if (destinationPhoneNumber.isBlank()) {
             Log.w(TAG, "Destination phone number is not configured.")
             return SendSmsResult(success = false, error = "Destination phone number is empty.")
@@ -46,6 +50,10 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         if (!hasSmsPermission()) {
             Log.w(TAG, "SEND_SMS permission not granted.")
             return SendSmsResult(success = false, error = "SEND_SMS permission not granted.")
+        }
+        checkLimitReachedError(historyDb)?.let { limitError ->
+            Log.w(TAG, limitError)
+            return SendSmsResult(success = false, error = limitError)
         }
 
         return runCatching {
@@ -62,6 +70,33 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }.getOrElse {
             SendSmsResult(success = false, error = it.message ?: "Failed to send SMS.")
         }
+    }
+
+    private fun checkLimitReachedError(historyDb: SmsHistoryDatabase): String? {
+        val settings = SmsLimitSettings(applicationContext).getConfig()
+        val now = System.currentTimeMillis()
+
+        settings.dailyLimit?.let { dailyLimit ->
+            val todaySentCount = historyDb.countSuccessfulSmsBetween(
+                SmsLimitSettings.getStartOfTodayMillis(now),
+                SmsLimitSettings.getStartOfNextDayMillis(now)
+            )
+            if (todaySentCount >= dailyLimit) {
+                return getString(R.string.daily_limit_reached)
+            }
+        }
+
+        settings.monthlyLimit?.let { monthlyLimit ->
+            val monthSentCount = historyDb.countSuccessfulSmsBetween(
+                SmsLimitSettings.getStartOfMonthMillis(now),
+                SmsLimitSettings.getStartOfNextMonthMillis(now)
+            )
+            if (monthSentCount >= monthlyLimit) {
+                return getString(R.string.monthly_limit_reached)
+            }
+        }
+
+        return null
     }
 
     private fun triggerCallbackSafely(

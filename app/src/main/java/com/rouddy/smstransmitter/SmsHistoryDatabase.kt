@@ -87,6 +87,23 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun countSuccessfulSmsBetween(startMillisInclusive: Long, endMillisExclusive: Long): Int {
+        val query = """
+            SELECT COUNT(*)
+            FROM $TABLE_SMS_HISTORY
+            WHERE $COLUMN_SMS_SUCCESS = 1
+              AND $COLUMN_CREATED_AT >= ?
+              AND $COLUMN_CREATED_AT < ?
+        """.trimIndent()
+
+        return readableDatabase.rawQuery(
+            query,
+            arrayOf(startMillisInclusive.toString(), endMillisExclusive.toString())
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getInt(0) else 0
+        }
+    }
+
     companion object {
         private const val DATABASE_NAME = "sms_history.db"
         private const val DATABASE_VERSION = 2
