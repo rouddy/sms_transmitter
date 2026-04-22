@@ -1,7 +1,6 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
-import android.content.Context
 import android.content.pm.PackageManager
 import android.telephony.SmsManager
 import android.util.Log
@@ -18,27 +17,35 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = FcmPayloadParser.parse(remoteMessage.data)
         if (payload == null) {
-            Log.w(TAG, "Missing or empty 'message' in FCM data payload.")
+            Log.w(TAG, "Missing or empty 'phoneNumber'/'message' in FCM data payload.")
             return
         }
 
-        val phoneNumber = getSharedPreferences(MainActivity.PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(MainActivity.KEY_PHONE_NUMBER, "")
-            .orEmpty()
-            .trim()
+        val smsResult = sendSmsSafely(payload.phoneNumber, payload.message)
+        val historyDb = SmsHistoryDatabase(applicationContext)
+        val historyRowId = try {
+            historyDb.insertSmsHistory(
+                phoneNumber = payload.phoneNumber,
+                message = payload.message,
+                smsSuccess = smsResult.success,
+                smsError = smsResult.error,
+                callbackUrl = payload.callback
+            )
+        } finally {
+            historyDb.close()
+        }
 
-        sendSmsSafely(phoneNumber, payload.message)
-        triggerCallbackSafely(payload.callback)
+        triggerCallbackSafely(payload.callback, historyRowId)
     }
 
-    private fun sendSmsSafely(destinationPhoneNumber: String, message: String): Boolean {
+    private fun sendSmsSafely(destinationPhoneNumber: String, message: String): SendSmsResult {
         if (destinationPhoneNumber.isBlank()) {
             Log.w(TAG, "Destination phone number is not configured.")
-            return false
+            return SendSmsResult(success = false, error = "Destination phone number is empty.")
         }
         if (!hasSmsPermission()) {
             Log.w(TAG, "SEND_SMS permission not granted.")
-            return false
+            return SendSmsResult(success = false, error = "SEND_SMS permission not granted.")
         }
 
         return runCatching {
@@ -49,33 +56,65 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             } else {
                 smsManager.sendTextMessage(destinationPhoneNumber, null, message, null, null)
             }
-            true
+            SendSmsResult(success = true, error = null)
         }.onFailure {
             Log.e(TAG, "Failed to send SMS.", it)
-        }.getOrDefault(false)
+        }.getOrElse {
+            SendSmsResult(success = false, error = it.message ?: "Failed to send SMS.")
+        }
     }
 
-    private fun triggerCallbackSafely(callbackUrl: String) {
-        if (callbackUrl.isBlank()) return
+    private fun triggerCallbackSafely(
+        callbackUrl: String?,
+        rowId: Long
+    ) {
+        if (callbackUrl.isNullOrBlank()) return
         if (!isSupportedHttpUrl(callbackUrl)) {
             Log.w(TAG, "Invalid callback URL: $callbackUrl")
+            val historyDb = SmsHistoryDatabase(applicationContext)
+            try {
+                historyDb.updateCallbackResult(
+                    rowId = rowId,
+                    callbackSuccess = false,
+                    callbackError = "Invalid callback URL."
+                )
+            } finally {
+                historyDb.close()
+            }
             return
         }
 
         callbackExecutor.execute {
-            runCatching {
-                val endpoint = URL(callbackUrl)
-                val connection = endpoint.openConnection() as HttpURLConnection
-                try {
-                    connection.requestMethod = "GET"
-                    connection.connectTimeout = 5_000
-                    connection.readTimeout = 5_000
-                    connection.inputStream.buffered().use { it.readBytes() }
-                } finally {
-                    connection.disconnect()
+            val historyDb = try {
+                SmsHistoryDatabase(applicationContext)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open SMS history DB for callback logging.", e)
+                return@execute
+            }
+
+            try {
+                runCatching {
+                    val endpoint = URL(callbackUrl)
+                    val connection = endpoint.openConnection() as HttpURLConnection
+                    try {
+                        connection.requestMethod = "GET"
+                        connection.connectTimeout = 5_000
+                        connection.readTimeout = 5_000
+                        connection.inputStream.buffered().use { it.readBytes() }
+                    } finally {
+                        connection.disconnect()
+                    }
+                    historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
+                }.onFailure {
+                    Log.e(TAG, "Failed to call callback URL.", it)
+                    historyDb.updateCallbackResult(
+                        rowId = rowId,
+                        callbackSuccess = false,
+                        callbackError = it.message ?: "Failed to call callback URL."
+                    )
                 }
-            }.onFailure {
-                Log.e(TAG, "Failed to call callback URL.", it)
+            } finally {
+                historyDb.close()
             }
         }
     }
@@ -97,3 +136,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         private val callbackExecutor: ExecutorService = Executors.newCachedThreadPool()
     }
 }
+
+private data class SendSmsResult(
+    val success: Boolean,
+    val error: String?
+)
