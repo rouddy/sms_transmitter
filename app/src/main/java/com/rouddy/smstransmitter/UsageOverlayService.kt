@@ -223,12 +223,12 @@ class UsageOverlayService : Service() {
 private class RadialUsageView(context: Context) : View(context) {
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(8f)
+        strokeWidth = dp(8f).toFloat()
         color = Color.argb(130, 255, 255, 255)
     }
     private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
-        strokeWidth = dp(8f)
+        strokeWidth = dp(8f).toFloat()
         strokeCap = Paint.Cap.ROUND
         color = Color.parseColor("#4CAF50")
     }
