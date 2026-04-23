@@ -22,6 +22,7 @@ import kotlin.math.min
 class UsageOverlayService : Service() {
     private lateinit var windowManager: WindowManager
     private lateinit var smsLimitSettings: SmsLimitSettings
+    private lateinit var smsHistoryDatabase: SmsHistoryDatabase
     private var overlayContainer: LinearLayout? = null
     private var layoutParams: WindowManager.LayoutParams? = null
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -36,6 +37,7 @@ class UsageOverlayService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         smsLimitSettings = SmsLimitSettings(this)
+        smsHistoryDatabase = SmsHistoryDatabase(this)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -60,6 +62,7 @@ class UsageOverlayService : Service() {
     override fun onDestroy() {
         mainHandler.removeCallbacks(refreshRunnable)
         removeOverlay()
+        smsHistoryDatabase.close()
         super.onDestroy()
     }
 
@@ -74,16 +77,14 @@ class UsageOverlayService : Service() {
         }
 
         val now = System.currentTimeMillis()
-        val historyDb = SmsHistoryDatabase(this)
-        val todaySentCount = historyDb.countSuccessfulSmsBetween(
+        val todaySentCount = smsHistoryDatabase.countSuccessfulSmsBetween(
             SmsLimitSettings.getStartOfTodayMillis(now),
             SmsLimitSettings.getStartOfNextDayMillis(now)
         )
-        val monthSentCount = historyDb.countSuccessfulSmsBetween(
+        val monthSentCount = smsHistoryDatabase.countSuccessfulSmsBetween(
             SmsLimitSettings.getStartOfMonthMillis(now),
             SmsLimitSettings.getStartOfNextMonthMillis(now)
         )
-        historyDb.close()
 
         val container = overlayContainer ?: createOverlayContainer().also { addOverlay(it) }
         container.removeAllViews()
@@ -247,6 +248,12 @@ private class RadialUsageView(context: Context) : View(context) {
 
     fun setUsage(label: String, limit: Int, sent: Int) {
         this.label = label
+        if (limit <= 0) {
+            remaining = 0
+            progress = 0f
+            invalidate()
+            return
+        }
         remaining = (limit - sent).coerceAtLeast(0)
         progress = (sent.coerceAtMost(limit).toFloat() / limit.toFloat()).coerceIn(0f, 1f)
         invalidate()

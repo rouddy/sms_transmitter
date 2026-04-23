@@ -53,7 +53,7 @@ class SettingsActivity : AppCompatActivity() {
             if (isChecked) {
                 val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
                 val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
-                if (dailyLimit <= 0 || monthlyLimit <= 0) {
+                if (!canEnableOverlayWithLimits(dailyLimit, monthlyLimit)) {
                     Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
                     setOverlaySwitchChecked(false)
                     return@setOnCheckedChangeListener
@@ -93,7 +93,7 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
-        val canEnableOverlayWithLimits = dailyLimit > 0 && monthlyLimit > 0
+        val canEnableOverlayWithLimits = canEnableOverlayWithLimits(dailyLimit, monthlyLimit)
         val requestedOverlayEnabled = overlaySwitch.isChecked
         val shouldEnableOverlay = requestedOverlayEnabled && canEnableOverlayWithLimits &&
             Settings.canDrawOverlays(this)
@@ -107,9 +107,9 @@ class SettingsActivity : AppCompatActivity() {
 
         smsLimitSettings.saveConfig(
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
-            monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT },
-            overlayEnabled = shouldEnableOverlay
+            monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
+        smsLimitSettings.setOverlayEnabled(shouldEnableOverlay)
         if (shouldEnableOverlay) {
             UsageOverlayService.start(this)
         } else {
@@ -136,6 +136,10 @@ class SettingsActivity : AppCompatActivity() {
         bindingOverlaySwitch = true
         overlaySwitch.isChecked = isChecked
         bindingOverlaySwitch = false
+    }
+
+    private fun canEnableOverlayWithLimits(dailyLimit: Int, monthlyLimit: Int): Boolean {
+        return dailyLimit > 0 && monthlyLimit > 0
     }
 
     companion object {

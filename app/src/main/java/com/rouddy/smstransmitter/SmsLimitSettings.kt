@@ -20,12 +20,11 @@ class SmsLimitSettings(context: Context) {
         )
     }
 
-    fun saveConfig(dailyLimit: Int?, monthlyLimit: Int?, overlayEnabled: Boolean? = null) {
-        val editor = preferences.edit()
+    fun saveConfig(dailyLimit: Int?, monthlyLimit: Int?) {
+        preferences.edit()
             .putString(KEY_DAILY_LIMIT, dailyLimit?.toString())
             .putString(KEY_MONTHLY_LIMIT, monthlyLimit?.toString())
-        overlayEnabled?.let { editor.putBoolean(KEY_OVERLAY_ENABLED, it) }
-        editor.apply()
+            .apply()
     }
 
     fun setOverlayEnabled(enabled: Boolean) {
