@@ -22,4 +22,9 @@
     <string name="remaining_sms_counts">남은 SMS 횟수 (일/월): %1$s / %2$s</string>
     <string name="daily_limit_reached">하루 SMS 발신 한도에 도달했습니다.</string>
     <string name="monthly_limit_reached">한달 SMS 발신 한도에 도달했습니다.</string>
+    <string name="overlay_ui_toggle">Overlay UI 표시</string>
+    <string name="overlay_requires_limits">Overlay UI를 사용하려면 일/월 한도를 모두 설정해야 합니다.</string>
+    <string name="overlay_permission_required">Overlay UI를 사용하려면 다른 앱 위에 표시 권한이 필요합니다.</string>
+    <string name="overlay_daily_label">일</string>
+    <string name="overlay_monthly_label">월</string>
 </resources>

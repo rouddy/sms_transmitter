@@ -1,16 +1,37 @@
 package com.rouddy.smstransmitter
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.switchmaterial.SwitchMaterial
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var dailyLimitInput: EditText
     private lateinit var monthlyLimitInput: EditText
     private lateinit var saveButton: Button
+    private lateinit var overlaySwitch: SwitchMaterial
     private lateinit var smsLimitSettings: SmsLimitSettings
+    private var bindingOverlaySwitch = false
+    private var pendingOverlayEnable = false
+
+    private val overlayPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (pendingOverlayEnable && hasOverlayPermission()) {
+                setOverlaySwitchChecked(true)
+                applyOverlayState(enabled = true)
+            } else if (pendingOverlayEnable) {
+                setOverlaySwitchChecked(false)
+                applyOverlayState(enabled = false)
+                Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
+            }
+            pendingOverlayEnable = false
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,15 +43,41 @@ class SettingsActivity : AppCompatActivity() {
         dailyLimitInput = findViewById(R.id.input_daily_limit)
         monthlyLimitInput = findViewById(R.id.input_monthly_limit)
         saveButton = findViewById(R.id.button_save_limits)
+        overlaySwitch = findViewById(R.id.switch_overlay_ui)
 
         bindCurrentValues()
         saveButton.setOnClickListener { saveValues() }
+        overlaySwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (bindingOverlaySwitch) return@setOnCheckedChangeListener
+            if (isChecked) {
+                val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
+                val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
+                when (evaluateOverlayEnablement(dailyLimit, monthlyLimit)) {
+                    OverlayEnablementStatus.LIMITS_MISSING -> {
+                        Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+                        setOverlaySwitchChecked(false)
+                        return@setOnCheckedChangeListener
+                    }
+                    OverlayEnablementStatus.PERMISSION_MISSING -> {
+                        pendingOverlayEnable = true
+                        requestOverlayPermission()
+                        return@setOnCheckedChangeListener
+                    }
+                    OverlayEnablementStatus.ENABLED -> Unit
+                }
+                applyOverlayState(enabled = true)
+            } else {
+                pendingOverlayEnable = false
+                applyOverlayState(enabled = false)
+            }
+        }
     }
 
     private fun bindCurrentValues() {
         val config = smsLimitSettings.getConfig()
         dailyLimitInput.setText(config.dailyLimit?.toString().orEmpty())
         monthlyLimitInput.setText(config.monthlyLimit?.toString().orEmpty())
+        setOverlaySwitchChecked(config.overlayEnabled)
     }
 
     private fun saveValues() {
@@ -41,10 +88,29 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
+        val requestedOverlayEnabled = overlaySwitch.isChecked
+        val enablementStatus = evaluateOverlayEnablement(dailyLimit, monthlyLimit)
+        val shouldEnableOverlay = requestedOverlayEnabled && enablementStatus == OverlayEnablementStatus.ENABLED
+        if (requestedOverlayEnabled) {
+            when (enablementStatus) {
+                OverlayEnablementStatus.LIMITS_MISSING -> {
+                    Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+                    setOverlaySwitchChecked(false)
+                }
+                OverlayEnablementStatus.PERMISSION_MISSING -> {
+                    Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
+                    setOverlaySwitchChecked(false)
+                }
+                OverlayEnablementStatus.ENABLED -> Unit
+            }
+        }
+
         smsLimitSettings.saveConfig(
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
+        applyOverlayState(shouldEnableOverlay)
+
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
     }
@@ -59,6 +125,52 @@ class SettingsActivity : AppCompatActivity() {
     override fun onSupportNavigateUp(): Boolean {
         finish()
         return true
+    }
+
+    private fun setOverlaySwitchChecked(isChecked: Boolean) {
+        bindingOverlaySwitch = true
+        overlaySwitch.isChecked = isChecked
+        bindingOverlaySwitch = false
+    }
+
+    private fun canEnableOverlayWithLimits(dailyLimit: Int, monthlyLimit: Int): Boolean {
+        return dailyLimit > 0 && monthlyLimit > 0
+    }
+
+    private fun evaluateOverlayEnablement(dailyLimit: Int, monthlyLimit: Int): OverlayEnablementStatus {
+        if (!canEnableOverlayWithLimits(dailyLimit, monthlyLimit)) {
+            return OverlayEnablementStatus.LIMITS_MISSING
+        }
+        if (!hasOverlayPermission()) {
+            return OverlayEnablementStatus.PERMISSION_MISSING
+        }
+        return OverlayEnablementStatus.ENABLED
+    }
+
+    private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
+
+    private fun requestOverlayPermission() {
+        overlayPermissionLauncher.launch(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+
+    private fun applyOverlayState(enabled: Boolean) {
+        smsLimitSettings.setOverlayEnabled(enabled)
+        if (enabled) {
+            UsageOverlayService.start(this)
+        } else {
+            UsageOverlayService.stop(this)
+        }
+    }
+
+    private enum class OverlayEnablementStatus {
+        ENABLED,
+        LIMITS_MISSING,
+        PERMISSION_MISSING
     }
 
     companion object {

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.TextView
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         renderHistory()
+        refreshOverlayUi()
     }
 
     override fun onDestroy() {
@@ -137,5 +139,18 @@ class MainActivity : AppCompatActivity() {
     private fun formatRemainingText(limit: Int?, sentCount: Int): String {
         return limit?.let { (it - sentCount).coerceAtLeast(0).toString() }
             ?: getString(R.string.unlimited)
+    }
+
+    private fun refreshOverlayUi() {
+        val config = smsLimitSettings.getConfig()
+        val shouldShowOverlay = config.overlayEnabled &&
+            config.dailyLimit != null &&
+            config.monthlyLimit != null &&
+            Settings.canDrawOverlays(this)
+        if (shouldShowOverlay) {
+            UsageOverlayService.start(this)
+        } else {
+            UsageOverlayService.stop(this)
+        }
     }
 }
