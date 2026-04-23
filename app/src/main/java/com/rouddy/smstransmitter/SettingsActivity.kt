@@ -52,15 +52,18 @@ class SettingsActivity : AppCompatActivity() {
             if (isChecked) {
                 val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
                 val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
-                if (!canEnableOverlayWithLimits(dailyLimit, monthlyLimit)) {
-                    Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
-                    setOverlaySwitchChecked(false)
-                    return@setOnCheckedChangeListener
-                }
-                if (!hasOverlayPermission()) {
-                    pendingOverlayEnable = true
-                    requestOverlayPermission()
-                    return@setOnCheckedChangeListener
+                when (evaluateOverlayEnablement(dailyLimit, monthlyLimit)) {
+                    OverlayEnablementStatus.LIMITS_MISSING -> {
+                        Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+                        setOverlaySwitchChecked(false)
+                        return@setOnCheckedChangeListener
+                    }
+                    OverlayEnablementStatus.PERMISSION_MISSING -> {
+                        pendingOverlayEnable = true
+                        requestOverlayPermission()
+                        return@setOnCheckedChangeListener
+                    }
+                    OverlayEnablementStatus.ENABLED -> Unit
                 }
                 applyOverlayState(enabled = true)
             } else {
@@ -85,16 +88,21 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
-        val canEnableOverlayWithLimits = canEnableOverlayWithLimits(dailyLimit, monthlyLimit)
         val requestedOverlayEnabled = overlaySwitch.isChecked
-        val shouldEnableOverlay = requestedOverlayEnabled && canEnableOverlayWithLimits &&
-            hasOverlayPermission()
-        if (requestedOverlayEnabled && !canEnableOverlayWithLimits) {
-            Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
-            setOverlaySwitchChecked(false)
-        } else if (requestedOverlayEnabled && !hasOverlayPermission()) {
-            Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
-            setOverlaySwitchChecked(false)
+        val enablementStatus = evaluateOverlayEnablement(dailyLimit, monthlyLimit)
+        val shouldEnableOverlay = requestedOverlayEnabled && enablementStatus == OverlayEnablementStatus.ENABLED
+        if (requestedOverlayEnabled) {
+            when (enablementStatus) {
+                OverlayEnablementStatus.LIMITS_MISSING -> {
+                    Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+                    setOverlaySwitchChecked(false)
+                }
+                OverlayEnablementStatus.PERMISSION_MISSING -> {
+                    Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
+                    setOverlaySwitchChecked(false)
+                }
+                OverlayEnablementStatus.ENABLED -> Unit
+            }
         }
 
         smsLimitSettings.saveConfig(
@@ -129,6 +137,16 @@ class SettingsActivity : AppCompatActivity() {
         return dailyLimit > 0 && monthlyLimit > 0
     }
 
+    private fun evaluateOverlayEnablement(dailyLimit: Int, monthlyLimit: Int): OverlayEnablementStatus {
+        if (!canEnableOverlayWithLimits(dailyLimit, monthlyLimit)) {
+            return OverlayEnablementStatus.LIMITS_MISSING
+        }
+        if (!hasOverlayPermission()) {
+            return OverlayEnablementStatus.PERMISSION_MISSING
+        }
+        return OverlayEnablementStatus.ENABLED
+    }
+
     private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
 
     private fun requestOverlayPermission() {
@@ -147,6 +165,12 @@ class SettingsActivity : AppCompatActivity() {
         } else {
             UsageOverlayService.stop(this)
         }
+    }
+
+    private enum class OverlayEnablementStatus {
+        ENABLED,
+        LIMITS_MISSING,
+        PERMISSION_MISSING
     }
 
     companion object {
