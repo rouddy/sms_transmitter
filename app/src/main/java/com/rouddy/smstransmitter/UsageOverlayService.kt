@@ -70,7 +70,9 @@ class UsageOverlayService : Service() {
 
     private fun refreshOverlay() {
         val config = smsLimitSettings.getConfig()
-        if (!config.overlayEnabled || config.dailyLimit == null || config.monthlyLimit == null) {
+        val dailyLimit = config.dailyLimit
+        val monthlyLimit = config.monthlyLimit
+        if (!config.overlayEnabled || (dailyLimit == null && monthlyLimit == null)) {
             removeOverlay()
             stopSelf()
             return
@@ -89,28 +91,36 @@ class UsageOverlayService : Service() {
         val container = ensureOverlayContainer()
         container.removeAllViews()
 
-        container.addView(
-            RadialUsageView(this).apply {
-                setUsage(
-                    label = getString(R.string.overlay_daily_label),
-                    limit = config.dailyLimit,
-                    sent = todaySentCount
-                )
-            }
-        )
-        container.addView(
-            RadialUsageView(this).apply {
-                setUsage(
-                    label = getString(R.string.overlay_monthly_label),
-                    limit = config.monthlyLimit,
-                    sent = monthSentCount
-                )
-            },
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(16f) }
-        )
+        var hasPreviousView = false
+        dailyLimit?.let { configuredDailyLimit ->
+            container.addView(
+                RadialUsageView(this).apply {
+                    setUsage(
+                        label = getString(R.string.overlay_daily_label),
+                        limit = configuredDailyLimit,
+                        sent = todaySentCount
+                    )
+                }
+            )
+            hasPreviousView = true
+        }
+        monthlyLimit?.let { configuredMonthlyLimit ->
+            container.addView(
+                RadialUsageView(this).apply {
+                    setUsage(
+                        label = getString(R.string.overlay_monthly_label),
+                        limit = configuredMonthlyLimit,
+                        sent = monthSentCount
+                    )
+                },
+                LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply {
+                    if (hasPreviousView) marginStart = dp(16f)
+                }
+            )
+        }
     }
 
     private fun createOverlayContainer(): LinearLayout {

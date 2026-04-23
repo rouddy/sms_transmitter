@@ -134,7 +134,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun canEnableOverlayWithLimits(dailyLimit: Int, monthlyLimit: Int): Boolean {
-        return dailyLimit > 0 && monthlyLimit > 0
+        return dailyLimit > 0 || monthlyLimit > 0
     }
 
     private fun evaluateOverlayEnablement(dailyLimit: Int, monthlyLimit: Int): OverlayEnablementStatus {

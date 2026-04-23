@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,7 +19,10 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var remainingCountView: TextView
+    private lateinit var dailyUsageView: TextView
+    private lateinit var monthlyUsageView: TextView
+    private lateinit var dailyUsageProgress: ProgressBar
+    private lateinit var monthlyUsageProgress: ProgressBar
     private lateinit var historyContentView: TextView
     private lateinit var smsHistoryDb: SmsHistoryDatabase
     private lateinit var smsLimitSettings: SmsLimitSettings
@@ -36,7 +41,10 @@ class MainActivity : AppCompatActivity() {
 
         smsLimitSettings = SmsLimitSettings(this)
         smsHistoryDb = SmsHistoryDatabase(this)
-        remainingCountView = findViewById(R.id.remaining_count_content)
+        dailyUsageView = findViewById(R.id.daily_usage_content)
+        monthlyUsageView = findViewById(R.id.monthly_usage_content)
+        dailyUsageProgress = findViewById(R.id.progress_daily_usage)
+        monthlyUsageProgress = findViewById(R.id.progress_monthly_usage)
         historyContentView = findViewById(R.id.history_content)
 
         ensureSmsPermission()
@@ -126,26 +134,55 @@ class MainActivity : AppCompatActivity() {
             SmsLimitSettings.getStartOfNextMonthMillis(now)
         )
 
-        val dailyRemainingText = formatRemainingText(config.dailyLimit, todaySentCount)
-        val monthlyRemainingText = formatRemainingText(config.monthlyLimit, monthSentCount)
-
-        remainingCountView.text = getString(
-            R.string.remaining_sms_counts,
-            dailyRemainingText,
-            monthlyRemainingText
+        renderUsageRow(
+            limit = config.dailyLimit,
+            sentCount = todaySentCount,
+            periodLabel = getString(R.string.period_daily),
+            textView = dailyUsageView,
+            progressBar = dailyUsageProgress
+        )
+        renderUsageRow(
+            limit = config.monthlyLimit,
+            sentCount = monthSentCount,
+            periodLabel = getString(R.string.period_monthly),
+            textView = monthlyUsageView,
+            progressBar = monthlyUsageProgress
         )
     }
 
-    private fun formatRemainingText(limit: Int?, sentCount: Int): String {
-        return limit?.let { (it - sentCount).coerceAtLeast(0).toString() }
-            ?: getString(R.string.unlimited)
+    private fun renderUsageRow(
+        limit: Int?,
+        sentCount: Int,
+        periodLabel: String,
+        textView: TextView,
+        progressBar: ProgressBar
+    ) {
+        if (limit != null && limit > 0) {
+            val remainingCount = (limit - sentCount).coerceAtLeast(0)
+            textView.text = getString(
+                R.string.sms_usage_with_limit,
+                periodLabel,
+                sentCount,
+                limit,
+                remainingCount
+            )
+            progressBar.visibility = View.VISIBLE
+            progressBar.max = limit
+            progressBar.progress = sentCount.coerceAtMost(limit)
+        } else {
+            textView.text = getString(
+                R.string.sms_usage_unlimited,
+                periodLabel,
+                sentCount
+            )
+            progressBar.visibility = View.GONE
+        }
     }
 
     private fun refreshOverlayUi() {
         val config = smsLimitSettings.getConfig()
         val shouldShowOverlay = config.overlayEnabled &&
-            config.dailyLimit != null &&
-            config.monthlyLimit != null &&
+            (config.dailyLimit != null || config.monthlyLimit != null) &&
             Settings.canDrawOverlays(this)
         if (shouldShowOverlay) {
             UsageOverlayService.start(this)
