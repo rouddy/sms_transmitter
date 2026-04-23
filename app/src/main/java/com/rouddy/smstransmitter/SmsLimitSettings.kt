@@ -5,7 +5,8 @@ import java.util.Calendar
 
 data class SmsLimitConfig(
     val dailyLimit: Int?,
-    val monthlyLimit: Int?
+    val monthlyLimit: Int?,
+    val overlayEnabled: Boolean
 )
 
 class SmsLimitSettings(context: Context) {
@@ -14,15 +15,37 @@ class SmsLimitSettings(context: Context) {
     fun getConfig(): SmsLimitConfig {
         return SmsLimitConfig(
             dailyLimit = readLimit(KEY_DAILY_LIMIT),
-            monthlyLimit = readLimit(KEY_MONTHLY_LIMIT)
+            monthlyLimit = readLimit(KEY_MONTHLY_LIMIT),
+            overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false)
         )
     }
 
-    fun saveConfig(dailyLimit: Int?, monthlyLimit: Int?) {
-        preferences.edit()
+    fun saveConfig(dailyLimit: Int?, monthlyLimit: Int?, overlayEnabled: Boolean? = null) {
+        val editor = preferences.edit()
             .putString(KEY_DAILY_LIMIT, dailyLimit?.toString())
             .putString(KEY_MONTHLY_LIMIT, monthlyLimit?.toString())
+        overlayEnabled?.let { editor.putBoolean(KEY_OVERLAY_ENABLED, it) }
+        editor.apply()
+    }
+
+    fun setOverlayEnabled(enabled: Boolean) {
+        preferences.edit()
+            .putBoolean(KEY_OVERLAY_ENABLED, enabled)
             .apply()
+    }
+
+    fun saveOverlayPosition(x: Int, y: Int) {
+        preferences.edit()
+            .putInt(KEY_OVERLAY_POS_X, x)
+            .putInt(KEY_OVERLAY_POS_Y, y)
+            .apply()
+    }
+
+    fun getOverlayPosition(): Pair<Int, Int>? {
+        if (!preferences.contains(KEY_OVERLAY_POS_X) || !preferences.contains(KEY_OVERLAY_POS_Y)) {
+            return null
+        }
+        return preferences.getInt(KEY_OVERLAY_POS_X, 0) to preferences.getInt(KEY_OVERLAY_POS_Y, 0)
     }
 
     private fun readLimit(key: String): Int? {
@@ -35,6 +58,9 @@ class SmsLimitSettings(context: Context) {
         private const val PREF_NAME = "sms_limits"
         private const val KEY_DAILY_LIMIT = "daily_limit"
         private const val KEY_MONTHLY_LIMIT = "monthly_limit"
+        private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
+        private const val KEY_OVERLAY_POS_X = "overlay_pos_x"
+        private const val KEY_OVERLAY_POS_Y = "overlay_pos_y"
 
         fun getStartOfTodayMillis(nowMillis: Long = System.currentTimeMillis()): Long {
             val calendar = Calendar.getInstance().apply {

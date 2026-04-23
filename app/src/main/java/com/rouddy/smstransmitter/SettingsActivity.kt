@@ -1,16 +1,38 @@
 package com.rouddy.smstransmitter
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.switchmaterial.SwitchMaterial
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var dailyLimitInput: EditText
     private lateinit var monthlyLimitInput: EditText
     private lateinit var saveButton: Button
+    private lateinit var overlaySwitch: SwitchMaterial
     private lateinit var smsLimitSettings: SmsLimitSettings
+    private var bindingOverlaySwitch = false
+    private var pendingOverlayEnable = false
+
+    private val overlayPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            if (pendingOverlayEnable && Settings.canDrawOverlays(this)) {
+                setOverlaySwitchChecked(true)
+                smsLimitSettings.setOverlayEnabled(true)
+                UsageOverlayService.start(this)
+            } else if (pendingOverlayEnable) {
+                setOverlaySwitchChecked(false)
+                smsLimitSettings.setOverlayEnabled(false)
+                Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
+            }
+            pendingOverlayEnable = false
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -22,15 +44,45 @@ class SettingsActivity : AppCompatActivity() {
         dailyLimitInput = findViewById(R.id.input_daily_limit)
         monthlyLimitInput = findViewById(R.id.input_monthly_limit)
         saveButton = findViewById(R.id.button_save_limits)
+        overlaySwitch = findViewById(R.id.switch_overlay_ui)
 
         bindCurrentValues()
         saveButton.setOnClickListener { saveValues() }
+        overlaySwitch.setOnCheckedChangeListener { _, isChecked ->
+            if (bindingOverlaySwitch) return@setOnCheckedChangeListener
+            if (isChecked) {
+                val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
+                val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
+                if (dailyLimit <= 0 || monthlyLimit <= 0) {
+                    Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+                    setOverlaySwitchChecked(false)
+                    return@setOnCheckedChangeListener
+                }
+                if (!Settings.canDrawOverlays(this)) {
+                    pendingOverlayEnable = true
+                    overlayPermissionLauncher.launch(
+                        Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                    )
+                    return@setOnCheckedChangeListener
+                }
+                smsLimitSettings.setOverlayEnabled(true)
+                UsageOverlayService.start(this)
+            } else {
+                pendingOverlayEnable = false
+                smsLimitSettings.setOverlayEnabled(false)
+                UsageOverlayService.stop(this)
+            }
+        }
     }
 
     private fun bindCurrentValues() {
         val config = smsLimitSettings.getConfig()
         dailyLimitInput.setText(config.dailyLimit?.toString().orEmpty())
         monthlyLimitInput.setText(config.monthlyLimit?.toString().orEmpty())
+        setOverlaySwitchChecked(config.overlayEnabled)
     }
 
     private fun saveValues() {
@@ -41,10 +93,29 @@ class SettingsActivity : AppCompatActivity() {
             return
         }
 
+        val canEnableOverlayWithLimits = dailyLimit > 0 && monthlyLimit > 0
+        val requestedOverlayEnabled = overlaySwitch.isChecked
+        val shouldEnableOverlay = requestedOverlayEnabled && canEnableOverlayWithLimits &&
+            Settings.canDrawOverlays(this)
+        if (requestedOverlayEnabled && !canEnableOverlayWithLimits) {
+            Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
+            setOverlaySwitchChecked(false)
+        } else if (requestedOverlayEnabled && !Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
+            setOverlaySwitchChecked(false)
+        }
+
         smsLimitSettings.saveConfig(
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
-            monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
+            monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT },
+            overlayEnabled = shouldEnableOverlay
         )
+        if (shouldEnableOverlay) {
+            UsageOverlayService.start(this)
+        } else {
+            UsageOverlayService.stop(this)
+        }
+
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
     }
@@ -59,6 +130,12 @@ class SettingsActivity : AppCompatActivity() {
     override fun onSupportNavigateUp(): Boolean {
         finish()
         return true
+    }
+
+    private fun setOverlaySwitchChecked(isChecked: Boolean) {
+        bindingOverlaySwitch = true
+        overlaySwitch.isChecked = isChecked
+        bindingOverlaySwitch = false
     }
 
     companion object {

@@ -34,10 +34,17 @@
         android:hint="@string/monthly_limit_hint"
         android:inputType="number" />
 
+    <com.google.android.material.switchmaterial.SwitchMaterial
+        android:id="@+id/switch_overlay_ui"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="@string/overlay_ui_toggle" />
+
     <Button
         android:id="@+id/button_save_limits"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
+        android:layout_marginTop="16dp"
         android:text="@string/save" />
 </LinearLayout>
