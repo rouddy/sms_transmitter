@@ -22,13 +22,12 @@ class SettingsActivity : AppCompatActivity() {
 
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (pendingOverlayEnable && Settings.canDrawOverlays(this)) {
+            if (pendingOverlayEnable && hasOverlayPermission()) {
                 setOverlaySwitchChecked(true)
-                smsLimitSettings.setOverlayEnabled(true)
-                UsageOverlayService.start(this)
+                applyOverlayState(enabled = true)
             } else if (pendingOverlayEnable) {
                 setOverlaySwitchChecked(false)
-                smsLimitSettings.setOverlayEnabled(false)
+                applyOverlayState(enabled = false)
                 Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
             }
             pendingOverlayEnable = false
@@ -58,22 +57,15 @@ class SettingsActivity : AppCompatActivity() {
                     setOverlaySwitchChecked(false)
                     return@setOnCheckedChangeListener
                 }
-                if (!Settings.canDrawOverlays(this)) {
+                if (!hasOverlayPermission()) {
                     pendingOverlayEnable = true
-                    overlayPermissionLauncher.launch(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:$packageName")
-                        )
-                    )
+                    requestOverlayPermission()
                     return@setOnCheckedChangeListener
                 }
-                smsLimitSettings.setOverlayEnabled(true)
-                UsageOverlayService.start(this)
+                applyOverlayState(enabled = true)
             } else {
                 pendingOverlayEnable = false
-                smsLimitSettings.setOverlayEnabled(false)
-                UsageOverlayService.stop(this)
+                applyOverlayState(enabled = false)
             }
         }
     }
@@ -96,11 +88,11 @@ class SettingsActivity : AppCompatActivity() {
         val canEnableOverlayWithLimits = canEnableOverlayWithLimits(dailyLimit, monthlyLimit)
         val requestedOverlayEnabled = overlaySwitch.isChecked
         val shouldEnableOverlay = requestedOverlayEnabled && canEnableOverlayWithLimits &&
-            Settings.canDrawOverlays(this)
+            hasOverlayPermission()
         if (requestedOverlayEnabled && !canEnableOverlayWithLimits) {
             Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
             setOverlaySwitchChecked(false)
-        } else if (requestedOverlayEnabled && !Settings.canDrawOverlays(this)) {
+        } else if (requestedOverlayEnabled && !hasOverlayPermission()) {
             Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
             setOverlaySwitchChecked(false)
         }
@@ -109,12 +101,7 @@ class SettingsActivity : AppCompatActivity() {
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
-        smsLimitSettings.setOverlayEnabled(shouldEnableOverlay)
-        if (shouldEnableOverlay) {
-            UsageOverlayService.start(this)
-        } else {
-            UsageOverlayService.stop(this)
-        }
+        applyOverlayState(shouldEnableOverlay)
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
@@ -140,6 +127,26 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun canEnableOverlayWithLimits(dailyLimit: Int, monthlyLimit: Int): Boolean {
         return dailyLimit > 0 && monthlyLimit > 0
+    }
+
+    private fun hasOverlayPermission(): Boolean = Settings.canDrawOverlays(this)
+
+    private fun requestOverlayPermission() {
+        overlayPermissionLauncher.launch(
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+        )
+    }
+
+    private fun applyOverlayState(enabled: Boolean) {
+        smsLimitSettings.setOverlayEnabled(enabled)
+        if (enabled) {
+            UsageOverlayService.start(this)
+        } else {
+            UsageOverlayService.stop(this)
+        }
     }
 
     companion object {

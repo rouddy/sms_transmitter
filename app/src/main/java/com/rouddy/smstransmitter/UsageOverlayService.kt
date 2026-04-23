@@ -86,7 +86,7 @@ class UsageOverlayService : Service() {
             SmsLimitSettings.getStartOfNextMonthMillis(now)
         )
 
-        val container = overlayContainer ?: createOverlayContainer().also { addOverlay(it) }
+        val container = ensureOverlayContainer()
         container.removeAllViews()
 
         container.addView(
@@ -121,6 +121,13 @@ class UsageOverlayService : Service() {
             setOnTouchListener(DragTouchListener())
         }
         overlayContainer = container
+        return container
+    }
+
+    private fun ensureOverlayContainer(): LinearLayout {
+        overlayContainer?.let { return it }
+        val container = createOverlayContainer()
+        addOverlay(container)
         return container
     }
 
