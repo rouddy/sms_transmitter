@@ -1,6 +1,8 @@
-apply(plugin = "com.android.application")
-apply(plugin = "org.jetbrains.kotlin.android")
-apply(plugin = "com.google.gms.google-services")
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("com.google.gms.google-services")
+}
 
 android {
     namespace = "com.rouddy.smstransmitter"
