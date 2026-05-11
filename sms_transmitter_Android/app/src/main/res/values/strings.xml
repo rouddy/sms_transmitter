@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="server_url_label">서버 URL</string>
+    <string name="server_url_hint">예: http://192.168.0.1:8000</string>
     <string name="app_name">SMS Transmitter</string>
     <string name="history_title">SMS 전송 이력</string>
     <string name="no_history">아직 저장된 전송 이력이 없습니다.</string>

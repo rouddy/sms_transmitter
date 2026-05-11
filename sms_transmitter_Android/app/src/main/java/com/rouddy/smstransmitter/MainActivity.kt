@@ -3,8 +3,10 @@ package com.rouddy.smstransmitter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
@@ -14,6 +16,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import com.google.firebase.messaging.FirebaseMessaging
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -48,6 +51,7 @@ class MainActivity : AppCompatActivity() {
         historyContentView = findViewById(R.id.history_content)
 
         ensureSmsPermission()
+        registerFcmTokenWithServer()
         renderHistory()
     }
 
@@ -83,6 +87,35 @@ class MainActivity : AppCompatActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             permissionLauncher.launch(Manifest.permission.SEND_SMS)
+        }
+    }
+
+    private fun registerFcmTokenWithServer() {
+        val config = smsLimitSettings.getConfig()
+        val serverUrl = config.serverUrl ?: return
+
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                Log.w(TAG, "Failed to get FCM token.", task.exception)
+                return@addOnCompleteListener
+            }
+            val token = task.result ?: return@addOnCompleteListener
+            Thread {
+                runCatching {
+                    val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+                    GraphQlClient("$serverUrl/graphql").registerFcmToken(
+                        token = token,
+                        deviceInfo = deviceInfo,
+                        // Use LIMIT_UNLIMITED (Int.MAX_VALUE) when no local limit is set;
+                        // the server uses these values to select devices with remaining capacity.
+                        dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
+                        monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+                    )
+                    Log.i(TAG, "FCM token registered with server from MainActivity.")
+                }.onFailure {
+                    Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
+                }
+            }.start()
         }
     }
 
@@ -189,5 +222,12 @@ class MainActivity : AppCompatActivity() {
         } else {
             UsageOverlayService.stop(this)
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
+        // Sent to the server when no local limit is configured; effectively unlimited since
+        // daily/monthly counters reset periodically and will never approach this value.
+        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
     }
 }
