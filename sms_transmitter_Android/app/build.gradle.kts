@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
+    id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
 }
 
 android {
@@ -16,6 +17,26 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        create("dev") {
+            dimension = "environment"
+            buildConfigField("String", "SERVER_URL", "\"http://0.0.0.0:54323\"")
+        }
+        create("stg") {
+            dimension = "environment"
+            buildConfigField("String", "SERVER_URL", "\"http://sms_transmitter.com:54323\"")
+        }
+        create("live") {
+            dimension = "environment"
+            buildConfigField("String", "SERVER_URL", "\"https://sms_transmitter.com\"")
+        }
     }
 
     buildTypes {
@@ -34,6 +55,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+secrets {
+    propertiesFileName = "secrets.properties"
+    defaultPropertiesFileName = "secrets.defaults.properties"
 }
 
 dependencies {
