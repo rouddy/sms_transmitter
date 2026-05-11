@@ -6,7 +6,8 @@ import java.util.Calendar
 data class SmsLimitConfig(
     val dailyLimit: Int?,
     val monthlyLimit: Int?,
-    val overlayEnabled: Boolean
+    val overlayEnabled: Boolean,
+    val serverUrl: String?,
 )
 
 class SmsLimitSettings(context: Context) {
@@ -16,7 +17,8 @@ class SmsLimitSettings(context: Context) {
         return SmsLimitConfig(
             dailyLimit = readLimit(KEY_DAILY_LIMIT),
             monthlyLimit = readLimit(KEY_MONTHLY_LIMIT),
-            overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false)
+            overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false),
+            serverUrl = preferences.getString(KEY_SERVER_URL, null)?.trim()?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -24,6 +26,12 @@ class SmsLimitSettings(context: Context) {
         preferences.edit()
             .putString(KEY_DAILY_LIMIT, dailyLimit?.toString())
             .putString(KEY_MONTHLY_LIMIT, monthlyLimit?.toString())
+            .apply()
+    }
+
+    fun saveServerUrl(url: String?) {
+        preferences.edit()
+            .putString(KEY_SERVER_URL, url)
             .apply()
     }
 
@@ -55,6 +63,7 @@ class SmsLimitSettings(context: Context) {
 
     companion object {
         private const val PREF_NAME = "sms_limits"
+        private const val KEY_SERVER_URL = "server_url"
         private const val KEY_DAILY_LIMIT = "daily_limit"
         private const val KEY_MONTHLY_LIMIT = "monthly_limit"
         private const val KEY_OVERLAY_ENABLED = "overlay_enabled"

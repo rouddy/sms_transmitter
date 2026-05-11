@@ -113,6 +113,7 @@ impl FirebaseClient {
     pub async fn send_sms_request(
         &self,
         fcm_token: &str,
+        request_id: &str,
         phone_number: &str,
         message: &str,
         callback_url: Option<&str>,
@@ -120,6 +121,7 @@ impl FirebaseClient {
         let access_token = self.get_access_token().await?;
 
         let mut data = serde_json::json!({
+            "requestId": request_id,
             "phoneNumber": phone_number,
             "message": message,
         });

@@ -14,6 +14,7 @@ import com.google.android.material.switchmaterial.SwitchMaterial
 class SettingsActivity : AppCompatActivity() {
     private lateinit var dailyLimitInput: EditText
     private lateinit var monthlyLimitInput: EditText
+    private lateinit var serverUrlInput: EditText
     private lateinit var saveButton: Button
     private lateinit var overlaySwitch: SwitchMaterial
     private lateinit var smsLimitSettings: SmsLimitSettings
@@ -42,6 +43,7 @@ class SettingsActivity : AppCompatActivity() {
         smsLimitSettings = SmsLimitSettings(this)
         dailyLimitInput = findViewById(R.id.input_daily_limit)
         monthlyLimitInput = findViewById(R.id.input_monthly_limit)
+        serverUrlInput = findViewById(R.id.input_server_url)
         saveButton = findViewById(R.id.button_save_limits)
         overlaySwitch = findViewById(R.id.switch_overlay_ui)
 
@@ -77,6 +79,7 @@ class SettingsActivity : AppCompatActivity() {
         val config = smsLimitSettings.getConfig()
         dailyLimitInput.setText(config.dailyLimit?.toString().orEmpty())
         monthlyLimitInput.setText(config.monthlyLimit?.toString().orEmpty())
+        serverUrlInput.setText(config.serverUrl.orEmpty())
         setOverlaySwitchChecked(config.overlayEnabled)
     }
 
@@ -109,6 +112,7 @@ class SettingsActivity : AppCompatActivity() {
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
+        smsLimitSettings.saveServerUrl(serverUrlInput.text?.toString()?.trim()?.takeIf { it.isNotBlank() })
         applyOverlayState(shouldEnableOverlay)
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()

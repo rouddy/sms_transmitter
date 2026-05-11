@@ -2,6 +2,7 @@ package com.rouddy.smstransmitter
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.telephony.SmsManager
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -14,6 +15,27 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class FirebaseMessageReceiverService : FirebaseMessagingService() {
+    override fun onNewToken(token: String) {
+        super.onNewToken(token)
+        val config = SmsLimitSettings(applicationContext).getConfig()
+        val serverUrl = config.serverUrl ?: return
+
+        networkExecutor.execute {
+            runCatching {
+                val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+                GraphQlClient("$serverUrl/graphql").registerFcmToken(
+                    token = token,
+                    deviceInfo = deviceInfo,
+                    dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
+                    monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+                )
+                Log.i(TAG, "FCM token registered with server.")
+            }.onFailure {
+                Log.e(TAG, "Failed to register FCM token with server.", it)
+            }
+        }
+    }
+
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = FcmPayloadParser.parse(remoteMessage.data)
         if (payload == null) {
@@ -24,13 +46,15 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         val historyDb = SmsHistoryDatabase(applicationContext)
         val historyRowId = try {
             val smsResult = sendSmsSafely(payload.phoneNumber, payload.message, historyDb)
-            historyDb.insertSmsHistory(
+            val rowId = historyDb.insertSmsHistory(
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
                 smsSuccess = smsResult.success,
                 smsError = smsResult.error,
                 callbackUrl = payload.callback
             )
+            reportSmsResultSafely(payload.requestId, smsResult)
+            rowId
         } finally {
             historyDb.close()
         }
@@ -97,6 +121,25 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         return null
+    }
+
+    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult) {
+        if (requestId.isNullOrBlank()) return
+        val config = SmsLimitSettings(applicationContext).getConfig()
+        val serverUrl = config.serverUrl ?: return
+
+        networkExecutor.execute {
+            runCatching {
+                GraphQlClient("$serverUrl/graphql").reportSmsResult(
+                    requestId = requestId,
+                    success = smsResult.success,
+                    error = smsResult.error,
+                )
+                Log.i(TAG, "SMS result reported to server for requestId=$requestId success=${smsResult.success}")
+            }.onFailure {
+                Log.e(TAG, "Failed to report SMS result to server for requestId=$requestId", it)
+            }
+        }
     }
 
     private fun triggerCallbackSafely(
@@ -168,6 +211,10 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "FirebaseSmsService"
+        // Sent to the server when no local limit is configured; effectively unlimited since
+        // daily/monthly counters reset periodically and will never approach this value.
+        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
+        private val networkExecutor: ExecutorService = Executors.newCachedThreadPool()
         private val callbackExecutor: ExecutorService = Executors.newCachedThreadPool()
     }
 }

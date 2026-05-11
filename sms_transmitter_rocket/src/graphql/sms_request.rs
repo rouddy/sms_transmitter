@@ -171,6 +171,7 @@ impl SmsRequestMutation {
                 match firebase
                     .send_sms_request(
                         &fcm_token_str,
+                        &request_id.to_string(),
                         &phone_number,
                         &message,
                         callback_url.as_deref(),
