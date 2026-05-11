@@ -18,7 +18,8 @@ class SmsLimitSettings(context: Context) {
             dailyLimit = readLimit(KEY_DAILY_LIMIT),
             monthlyLimit = readLimit(KEY_MONTHLY_LIMIT),
             overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false),
-            serverUrl = preferences.getString(KEY_SERVER_URL, null)?.trim()?.takeIf { it.isNotBlank() },
+            serverUrl = preferences.getString(KEY_SERVER_URL, null)?.trim()?.takeIf { it.isNotBlank() }
+                ?: BuildConfig.SERVER_URL,
         )
     }
 
