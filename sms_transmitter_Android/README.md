@@ -24,3 +24,8 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
 
 - `SEND_SMS` 권한 허용
 - Firebase Console에서 발급한 `google-services.json` 파일을 `app/google-services.json` 경로에 추가
+- secrets.properties 파일에 SERVER_URL 값을 추가하여 callback URL 설정
+
+```properties
+SERVER_URL=http://example.com:54323/callback
+```

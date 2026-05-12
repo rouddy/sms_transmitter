@@ -2,6 +2,7 @@ package com.rouddy.smstransmitter
 
 import android.content.Context
 import java.util.Calendar
+import com.rouddy.smstransmitter.BuildConfig
 
 data class SmsLimitConfig(
     val dailyLimit: Int?,
