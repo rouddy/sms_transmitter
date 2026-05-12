@@ -143,10 +143,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     private fun triggerCallbackSafely(callbackUrl: String?, rowId: Long) {
         if (callbackUrl.isNullOrBlank()) return
 
-        val historyDb = SmsHistoryDatabase(applicationContext)
-
         val callbackService = RetrofitClientProvider.create(
-            "http://localhost/",
+            "http://placeholder.internal/",
             CallbackApiService::class.java,
         )
 
@@ -155,6 +153,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             .subscribe(
                 { responseBody ->
                     responseBody.close()
+                    val historyDb = SmsHistoryDatabase(applicationContext)
                     try {
                         historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
                     } finally {
@@ -163,6 +162,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 },
                 { error ->
                     Log.e(TAG, "Failed to call callback URL.", error)
+                    val historyDb = SmsHistoryDatabase(applicationContext)
                     try {
                         historyDb.updateCallbackResult(
                             rowId = rowId,

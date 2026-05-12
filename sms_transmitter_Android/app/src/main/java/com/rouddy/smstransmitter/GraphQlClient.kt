@@ -68,7 +68,7 @@ class GraphQlClient(private val serverUrl: String) {
         return service.execute(GraphQlRequest(query = query, variables = variables))
             .map { response ->
                 if (response.errors?.isNotEmpty() == true) {
-                    Log.e(TAG, "GraphQL errors: ${response.errors}")
+                    throw GraphQlException("GraphQL errors: ${response.errors}")
                 }
                 Unit
             }
@@ -78,4 +78,6 @@ class GraphQlClient(private val serverUrl: String) {
         private const val TAG = "GraphQlClient"
     }
 }
+
+class GraphQlException(message: String) : Exception(message)
 
