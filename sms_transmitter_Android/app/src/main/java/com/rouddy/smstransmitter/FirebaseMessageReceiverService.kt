@@ -8,32 +8,31 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
-import java.net.HttpURLConnection
-import java.net.URI
-import java.net.URL
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.schedulers.Schedulers
 
 class FirebaseMessageReceiverService : FirebaseMessagingService() {
+
+    private val disposables = CompositeDisposable()
+
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         val config = SmsLimitSettings(applicationContext).getConfig()
         val serverUrl = config.serverUrl ?: return
 
-        networkExecutor.execute {
-            runCatching {
-                val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-                GraphQlClient("$serverUrl/graphql").registerFcmToken(
-                    token = token,
-                    deviceInfo = deviceInfo,
-                    dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
-                    monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
-                )
-                Log.i(TAG, "FCM token registered with server.")
-            }.onFailure {
-                Log.e(TAG, "Failed to register FCM token with server.", it)
-            }
-        }
+        val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+        val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
+            token = token,
+            deviceInfo = deviceInfo,
+            dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
+            monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+        )
+            .subscribeOn(Schedulers.io())
+            .subscribe(
+                { Log.i(TAG, "FCM token registered with server.") },
+                { Log.e(TAG, "Failed to register FCM token with server.", it) },
+            )
+        disposables.add(disposable)
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -128,73 +127,59 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         val config = SmsLimitSettings(applicationContext).getConfig()
         val serverUrl = config.serverUrl ?: return
 
-        networkExecutor.execute {
-            runCatching {
-                GraphQlClient("$serverUrl/graphql").reportSmsResult(
-                    requestId = requestId,
-                    success = smsResult.success,
-                    error = smsResult.error,
-                )
-                Log.i(TAG, "SMS result reported to server for requestId=$requestId success=${smsResult.success}")
-            }.onFailure {
-                Log.e(TAG, "Failed to report SMS result to server for requestId=$requestId", it)
-            }
-        }
+        val disposable = GraphQlClient("$serverUrl/").reportSmsResult(
+            requestId = requestId,
+            success = smsResult.success,
+            error = smsResult.error,
+        )
+            .subscribeOn(Schedulers.io())
+            .subscribe(
+                { Log.i(TAG, "SMS result reported to server for requestId=$requestId success=${smsResult.success}") },
+                { Log.e(TAG, "Failed to report SMS result to server for requestId=$requestId", it) },
+            )
+        disposables.add(disposable)
     }
 
-    private fun triggerCallbackSafely(
-        callbackUrl: String?,
-        rowId: Long
-    ) {
+    private fun triggerCallbackSafely(callbackUrl: String?, rowId: Long) {
         if (callbackUrl.isNullOrBlank()) return
-        if (!isSupportedHttpUrl(callbackUrl)) {
-            Log.w(TAG, "Invalid callback URL: $callbackUrl")
-            val historyDb = SmsHistoryDatabase(applicationContext)
-            try {
-                historyDb.updateCallbackResult(
-                    rowId = rowId,
-                    callbackSuccess = false,
-                    callbackError = "Invalid callback URL."
-                )
-            } finally {
-                historyDb.close()
-            }
-            return
-        }
 
-        callbackExecutor.execute {
-            val historyDb = try {
-                SmsHistoryDatabase(applicationContext)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to open SMS history DB for callback logging.", e)
-                return@execute
-            }
+        val historyDb = SmsHistoryDatabase(applicationContext)
 
-            try {
-                runCatching {
-                    val endpoint = URL(callbackUrl)
-                    val connection = endpoint.openConnection() as HttpURLConnection
+        val callbackService = RetrofitClientProvider.create(
+            "http://localhost/",
+            CallbackApiService::class.java,
+        )
+
+        val disposable = callbackService.get(callbackUrl)
+            .subscribeOn(Schedulers.io())
+            .subscribe(
+                { responseBody ->
+                    responseBody.close()
                     try {
-                        connection.requestMethod = "GET"
-                        connection.connectTimeout = 5_000
-                        connection.readTimeout = 5_000
-                        connection.inputStream.buffered().use { it.readBytes() }
+                        historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
                     } finally {
-                        connection.disconnect()
+                        historyDb.close()
                     }
-                    historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
-                }.onFailure {
-                    Log.e(TAG, "Failed to call callback URL.", it)
-                    historyDb.updateCallbackResult(
-                        rowId = rowId,
-                        callbackSuccess = false,
-                        callbackError = it.message ?: "Failed to call callback URL."
-                    )
-                }
-            } finally {
-                historyDb.close()
-            }
-        }
+                },
+                { error ->
+                    Log.e(TAG, "Failed to call callback URL.", error)
+                    try {
+                        historyDb.updateCallbackResult(
+                            rowId = rowId,
+                            callbackSuccess = false,
+                            callbackError = error.message ?: "Failed to call callback URL.",
+                        )
+                    } finally {
+                        historyDb.close()
+                    }
+                },
+            )
+        disposables.add(disposable)
+    }
+
+    override fun onDestroy() {
+        disposables.clear()
+        super.onDestroy()
     }
 
     private fun hasSmsPermission(): Boolean {
@@ -202,20 +187,9 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             PackageManager.PERMISSION_GRANTED
     }
 
-    private fun isSupportedHttpUrl(url: String): Boolean {
-        return runCatching {
-            val scheme = URI(url).scheme?.lowercase()
-            scheme == "http" || scheme == "https"
-        }.getOrDefault(false)
-    }
-
     companion object {
         private const val TAG = "FirebaseSmsService"
-        // Sent to the server when no local limit is configured; effectively unlimited since
-        // daily/monthly counters reset periodically and will never approach this value.
         private const val LIMIT_UNLIMITED = Int.MAX_VALUE
-        private val networkExecutor: ExecutorService = Executors.newCachedThreadPool()
-        private val callbackExecutor: ExecutorService = Executors.newCachedThreadPool()
     }
 }
 
@@ -223,3 +197,4 @@ private data class SendSmsResult(
     val success: Boolean,
     val error: String?
 )
+

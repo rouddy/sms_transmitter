@@ -17,6 +17,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessaging
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import io.reactivex.rxjava3.disposables.CompositeDisposable
+import io.reactivex.rxjava3.schedulers.Schedulers
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -29,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var historyContentView: TextView
     private lateinit var smsHistoryDb: SmsHistoryDatabase
     private lateinit var smsLimitSettings: SmsLimitSettings
+    private val disposables = CompositeDisposable()
     private val historyDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private val permissionLauncher =
@@ -63,6 +67,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         smsHistoryDb.close()
+        disposables.clear()
         super.onDestroy()
     }
 
@@ -100,22 +105,20 @@ class MainActivity : AppCompatActivity() {
                 return@addOnCompleteListener
             }
             val token = task.result ?: return@addOnCompleteListener
-            Thread {
-                runCatching {
-                    val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-                    GraphQlClient("$serverUrl/graphql").registerFcmToken(
-                        token = token,
-                        deviceInfo = deviceInfo,
-                        // Use LIMIT_UNLIMITED (Int.MAX_VALUE) when no local limit is set;
-                        // the server uses these values to select devices with remaining capacity.
-                        dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
-                        monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
-                    )
-                    Log.i(TAG, "FCM token registered with server from MainActivity.")
-                }.onFailure {
-                    Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
-                }
-            }.start()
+            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+            val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
+                token = token,
+                deviceInfo = deviceInfo,
+                dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
+                monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+            )
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(
+                    { Log.i(TAG, "FCM token registered with server from MainActivity.") },
+                    { Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it) },
+                )
+            disposables.add(disposable)
         }
     }
 
