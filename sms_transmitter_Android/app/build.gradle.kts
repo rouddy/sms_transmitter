@@ -23,22 +23,6 @@ android {
         buildConfig = true
     }
 
-    flavorDimensions += "environment"
-    productFlavors {
-        create("dev") {
-            dimension = "environment"
-            buildConfigField("String", "SERVER_URL", "\"http://0.0.0.0:54323\"")
-        }
-        create("stg") {
-            dimension = "environment"
-            buildConfigField("String", "SERVER_URL", "\"http://sms_transmitter.com:54323\"")
-        }
-        create("live") {
-            dimension = "environment"
-            buildConfigField("String", "SERVER_URL", "\"https://sms_transmitter.com\"")
-        }
-    }
-
     buildTypes {
         release {
             isMinifyEnabled = false

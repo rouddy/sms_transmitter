@@ -1,7 +1,7 @@
 .gradle/
 build/
 local.properties
-secrets.properties*
+secrets.defaults.properties
 **/build/
 .idea
 google-services.json
