@@ -90,6 +90,14 @@ impl FcmTokenMutation {
 
         Ok(FcmToken::from(model))
     }
+
+    pub async fn delete_fcm_token(&self, ctx: &Context<'_>, token_id: ID) -> Result<bool> {
+        let db = ctx.data::<DatabaseConnection>()?;
+        let token_uuid = Uuid::parse_str(&token_id.to_string())?;
+
+        let result = fcm_token::Entity::delete_by_id(token_uuid).exec(db).await?;
+        Ok(result.rows_affected > 0)
+    }
 }
 
 #[derive(Default)]
