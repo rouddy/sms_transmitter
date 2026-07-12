@@ -16,7 +16,12 @@ impl MigrationTrait for Migration {
                 Table::create()
                     .table(FcmTokens::Table)
                     .if_not_exists()
-                    .col(ColumnDef::new(FcmTokens::Id).uuid().not_null().primary_key())
+                    .col(
+                        ColumnDef::new(FcmTokens::Id)
+                            .uuid()
+                            .not_null()
+                            .primary_key(),
+                    )
                     .col(
                         ColumnDef::new(FcmTokens::Token)
                             .string()
@@ -38,14 +43,10 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .default(0),
                     )
-                    .col(
-                        ColumnDef::new(FcmTokens::LastDailyReset)
-                            .date_time()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(FcmTokens::LastDailyReset).date().not_null())
                     .col(
                         ColumnDef::new(FcmTokens::LastMonthlyReset)
-                            .date_time()
+                            .date()
                             .not_null(),
                     )
                     .col(ColumnDef::new(FcmTokens::CreatedAt).date_time().not_null())
@@ -65,11 +66,7 @@ impl MigrationTrait for Migration {
                             .not_null()
                             .primary_key(),
                     )
-                    .col(
-                        ColumnDef::new(SmsRequests::PhoneNumber)
-                            .string()
-                            .not_null(),
-                    )
+                    .col(ColumnDef::new(SmsRequests::PhoneNumber).string().not_null())
                     .col(ColumnDef::new(SmsRequests::Message).text().not_null())
                     .col(ColumnDef::new(SmsRequests::CallbackUrl).string().null())
                     .col(ColumnDef::new(SmsRequests::Status).string().not_null())

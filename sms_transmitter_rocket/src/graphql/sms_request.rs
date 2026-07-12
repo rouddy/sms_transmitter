@@ -1,5 +1,5 @@
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
-use chrono::{Datelike, Utc};
+use chrono::Local;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
 use uuid::Uuid;
 
@@ -85,57 +85,31 @@ impl SmsRequestMutation {
     ) -> Result<SmsRequest> {
         let db = ctx.data::<DatabaseConnection>()?;
         let firebase = ctx.data::<std::sync::Arc<FirebaseClient>>()?;
-        let now = Utc::now().naive_utc();
-        let today = now.date();
-        let this_month = (now.year(), now.month());
+        let now = Local::now().naive_local();
 
         let txn = db.begin().await?;
 
         let tokens = fcm_token::Entity::find().all(&txn).await?;
 
-        let mut selected: Option<fcm_token::Model> = None;
-        for token in tokens {
-            let mut active: fcm_token::ActiveModel = token.clone().into();
-            let mut modified = false;
-
-            if token.last_daily_reset.date() < today {
-                active.daily_sent_count = Set(0);
-                active.last_daily_reset = Set(now);
-                modified = true;
-            }
-
-            let reset_month = (
-                token.last_monthly_reset.year(),
-                token.last_monthly_reset.month(),
-            );
-            if reset_month < this_month {
-                active.monthly_sent_count = Set(0);
-                active.last_monthly_reset = Set(now);
-                modified = true;
-            }
-
-            let daily_sent = match &active.daily_sent_count {
-                sea_orm::ActiveValue::Set(v) => *v,
-                _ => token.daily_sent_count,
-            };
-
-            let monthly_sent = match &active.monthly_sent_count {
-                sea_orm::ActiveValue::Set(v) => *v,
-                _ => token.monthly_sent_count,
-            };
-
-            if daily_sent < token.daily_limit && monthly_sent < token.monthly_limit {
-                active.daily_sent_count = Set(daily_sent + 1);
-                active.monthly_sent_count = Set(monthly_sent + 1);
-                active.updated_at = Set(now);
-                let updated = active.update(&txn).await?;
-                selected = Some(updated);
-                break;
-            } else if modified {
-                active.updated_at = Set(now);
-                active.update(&txn).await?;
-            }
-        }
+        let selected = tokens
+            .iter()
+            .filter(|token| token.daily_remaining_ratio() > 0.0)
+            .max_by(|a, b| {
+                a.daily_remaining_ratio()
+                    .partial_cmp(&b.daily_remaining_ratio())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .cloned()
+            .or_else(|| {
+                tokens
+                    .iter()
+                    .max_by(|a, b| {
+                        a.monthly_remaining_ratio()
+                            .partial_cmp(&b.monthly_remaining_ratio())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .cloned()
+            });
 
         let request_id = Uuid::new_v4();
         let (status, assigned_token_id) = if let Some(ref token) = selected {
@@ -182,18 +156,15 @@ impl SmsRequestMutation {
                         tracing::info!("FCM message dispatched for request {request_id}");
                     }
                     Err(e) => {
-                        tracing::error!(
-                            "Failed to send FCM message for request {request_id}: {e}"
-                        );
-                        if let Ok(Some(req)) =
-                            sms_request::Entity::find_by_id(request_id)
-                                .one(&db_clone)
-                                .await
+                        tracing::error!("Failed to send FCM message for request {request_id}: {e}");
+                        if let Ok(Some(req)) = sms_request::Entity::find_by_id(request_id)
+                            .one(&db_clone)
+                            .await
                         {
                             let mut active: sms_request::ActiveModel = req.into();
                             active.status = Set(STATUS_FAILED.to_string());
                             active.error = Set(Some(e.to_string()));
-                            active.updated_at = Set(Utc::now().naive_utc());
+                            active.updated_at = Set(Local::now().naive_local());
                             let _ = active.update(&db_clone).await;
                         }
                     }
@@ -210,15 +181,34 @@ impl SmsRequestMutation {
         input: ReportSmsResultInput,
     ) -> Result<bool> {
         let db = ctx.data::<DatabaseConnection>()?;
-        let now = Utc::now().naive_utc();
+        let now = Local::now().naive_local();
+        let reset_at = now.date();
+        let txn = db.begin().await?;
 
         let request_id = Uuid::parse_str(&input.request_id)
             .map_err(|_| async_graphql::Error::new("Invalid request ID"))?;
 
         let request = sms_request::Entity::find_by_id(request_id)
-            .one(db)
+            .one(&txn)
             .await?
             .ok_or_else(|| async_graphql::Error::new("SMS request not found"))?;
+
+        if let Some(token_id) = request.assigned_token_id {
+            let token = fcm_token::Entity::find_by_id(token_id)
+                .one(&txn)
+                .await?
+                .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
+
+            let next_daily_sent_count = token.daily_sent_count + 1;
+            let next_monthly_sent_count = token.monthly_sent_count + 1;
+            let mut token_active: fcm_token::ActiveModel = token.into();
+            token_active.daily_sent_count = Set(next_daily_sent_count);
+            token_active.monthly_sent_count = Set(next_monthly_sent_count);
+            token_active.last_daily_reset = Set(reset_at);
+            token_active.last_monthly_reset = Set(reset_at);
+            token_active.updated_at = Set(now);
+            token_active.update(&txn).await?;
+        }
 
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
@@ -229,7 +219,9 @@ impl SmsRequestMutation {
             active.error = Set(input.error);
         }
         active.updated_at = Set(now);
-        active.update(db).await?;
+        active.update(&txn).await?;
+
+        txn.commit().await?;
 
         Ok(true)
     }

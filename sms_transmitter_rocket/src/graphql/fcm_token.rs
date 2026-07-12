@@ -1,5 +1,5 @@
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
-use chrono::Utc;
+use chrono::Local;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use uuid::Uuid;
 
@@ -57,7 +57,8 @@ impl FcmTokenMutation {
         input: RegisterFcmTokenInput,
     ) -> Result<FcmToken> {
         let db = ctx.data::<DatabaseConnection>()?;
-        let now = Utc::now().naive_utc();
+        let now = Local::now().naive_local();
+        let today = now.date();
 
         let existing = fcm_token::Entity::find()
             .filter(fcm_token::Column::Token.eq(&input.token))
@@ -80,8 +81,8 @@ impl FcmTokenMutation {
                 monthly_limit: Set(input.monthly_limit),
                 daily_sent_count: Set(0),
                 monthly_sent_count: Set(0),
-                last_daily_reset: Set(now),
-                last_monthly_reset: Set(now),
+                last_daily_reset: Set(today),
+                last_monthly_reset: Set(today),
                 created_at: Set(now),
                 updated_at: Set(now),
             };
