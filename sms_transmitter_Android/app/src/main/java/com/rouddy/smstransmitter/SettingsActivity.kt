@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.firebase.messaging.FirebaseMessaging
+import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 
 class SettingsActivity : AppCompatActivity() {
@@ -24,6 +25,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var smsLimitSettings: SmsLimitSettings
     private var bindingOverlaySwitch = false
     private var pendingOverlayEnable = false
+    private val disposables = CompositeDisposable()
 
     private val overlayPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -136,6 +138,11 @@ class SettingsActivity : AppCompatActivity() {
         return true
     }
 
+    override fun onDestroy() {
+        disposables.clear()
+        super.onDestroy()
+    }
+
     private fun setOverlaySwitchChecked(isChecked: Boolean) {
         bindingOverlaySwitch = true
         overlaySwitch.isChecked = isChecked
@@ -198,6 +205,7 @@ class SettingsActivity : AppCompatActivity() {
                     { Log.i(TAG, "FCM token registered with server from SettingsActivity.") },
                     { Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it) },
                 )
+                .also { disposables.add(it) }
         }
     }
 
