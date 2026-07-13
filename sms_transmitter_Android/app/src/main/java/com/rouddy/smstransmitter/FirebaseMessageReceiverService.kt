@@ -52,7 +52,16 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 smsError = smsResult.error,
                 callbackUrl = payload.callback
             )
-            reportSmsResultSafely(payload.requestId, smsResult)
+            val now = System.currentTimeMillis()
+            val dailySentCount = historyDb.countSuccessfulSmsBetween(
+                SmsLimitSettings.getStartOfTodayMillis(now),
+                SmsLimitSettings.getStartOfNextDayMillis(now)
+            )
+            val monthlySentCount = historyDb.countSuccessfulSmsBetween(
+                SmsLimitSettings.getStartOfMonthMillis(now),
+                SmsLimitSettings.getStartOfNextMonthMillis(now)
+            )
+            reportSmsResultSafely(payload.requestId, smsResult, dailySentCount, monthlySentCount)
             rowId
         } finally {
             historyDb.close()
@@ -122,7 +131,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         return null
     }
 
-    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult) {
+    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult, dailySentCount: Int, monthlySentCount: Int) {
         if (requestId.isNullOrBlank()) return
         val config = SmsLimitSettings(applicationContext).getConfig()
         val serverUrl = config.serverUrl ?: return
@@ -131,6 +140,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             requestId = requestId,
             success = smsResult.success,
             error = smsResult.error,
+            dailySentCount = dailySentCount,
+            monthlySentCount = monthlySentCount,
         )
             .subscribeOn(Schedulers.io())
             .subscribe(

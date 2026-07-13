@@ -46,7 +46,13 @@ class GraphQlClient(private val serverUrl: String) {
      * Reports the result of an SMS send attempt to the server.
      * Returns a [Single] that emits [Unit] on success or an error on failure.
      */
-    fun reportSmsResult(requestId: String, success: Boolean, error: String?): Single<Unit> {
+    fun reportSmsResult(
+        requestId: String,
+        success: Boolean,
+        error: String?,
+        dailySentCount: Int,
+        monthlySentCount: Int,
+    ): Single<Unit> {
         val mutation = """
             mutation ReportSmsResult(${'$'}input: ReportSmsResultInput!) {
               reportSmsResult(input: ${'$'}input)
@@ -56,6 +62,8 @@ class GraphQlClient(private val serverUrl: String) {
         val inputMap = mutableMapOf<String, Any>(
             "requestId" to requestId,
             "success" to success,
+            "dailySentCount" to dailySentCount,
+            "monthlySentCount" to monthlySentCount,
         )
         if (error != null) inputMap["error"] = error
 
