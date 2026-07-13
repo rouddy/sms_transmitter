@@ -71,6 +71,8 @@ pub struct ReportSmsResultInput {
     pub request_id: ID,
     pub success: bool,
     pub error: Option<String>,
+    pub daily_sent_count: i32,
+    pub monthly_sent_count: i32,
 }
 
 #[derive(Default)]
@@ -199,11 +201,9 @@ impl SmsRequestMutation {
                 .await?
                 .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
 
-            let next_daily_sent_count = token.daily_sent_count + 1;
-            let next_monthly_sent_count = token.monthly_sent_count + 1;
             let mut token_active: fcm_token::ActiveModel = token.into();
-            token_active.daily_sent_count = Set(next_daily_sent_count);
-            token_active.monthly_sent_count = Set(next_monthly_sent_count);
+            token_active.daily_sent_count = Set(input.daily_sent_count);
+            token_active.monthly_sent_count = Set(input.monthly_sent_count);
             token_active.last_daily_reset = Set(reset_at);
             token_active.last_monthly_reset = Set(reset_at);
             token_active.updated_at = Set(now);
