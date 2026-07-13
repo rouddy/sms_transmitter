@@ -54,8 +54,8 @@ impl FirebaseClient {
     pub fn from_json_file(path: &str) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read Firebase credentials file: {path}"))?;
-        let credentials: ServiceAccountCredentials = serde_json::from_str(&content)
-            .context("Failed to parse Firebase credentials JSON")?;
+        let credentials: ServiceAccountCredentials =
+            serde_json::from_str(&content).context("Failed to parse Firebase credentials JSON")?;
         Ok(Self::new(credentials))
     }
 
