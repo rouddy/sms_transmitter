@@ -2,14 +2,18 @@ package com.rouddy.smstransmitter
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.firebase.messaging.FirebaseMessaging
+import io.reactivex.rxjava3.schedulers.Schedulers
 
 class SettingsActivity : AppCompatActivity() {
     private lateinit var dailyLimitInput: EditText
@@ -114,6 +118,7 @@ class SettingsActivity : AppCompatActivity() {
         )
         smsLimitSettings.saveServerUrl(serverUrlInput.text?.toString()?.trim()?.takeIf { it.isNotBlank() })
         applyOverlayState(shouldEnableOverlay)
+        registerFcmTokenWithServer()
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
@@ -171,6 +176,31 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    private fun registerFcmTokenWithServer() {
+        val config = smsLimitSettings.getConfig()
+        val serverUrl = config.serverUrl ?: return
+
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (!task.isSuccessful) {
+                Log.w(TAG, "Failed to get FCM token.", task.exception)
+                return@addOnCompleteListener
+            }
+            val token = task.result ?: return@addOnCompleteListener
+            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+            GraphQlClient("$serverUrl/").registerFcmToken(
+                token = token,
+                deviceInfo = deviceInfo,
+                dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
+                monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+            )
+                .subscribeOn(Schedulers.io())
+                .subscribe(
+                    { Log.i(TAG, "FCM token registered with server from SettingsActivity.") },
+                    { Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it) },
+                )
+        }
+    }
+
     private enum class OverlayEnablementStatus {
         ENABLED,
         LIMITS_MISSING,
@@ -178,7 +208,9 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val TAG = "SettingsActivity"
         private const val EMPTY_LIMIT = -1
         private const val INVALID_LIMIT = -2
+        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
     }
 }
