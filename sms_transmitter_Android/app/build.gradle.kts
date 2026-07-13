@@ -17,6 +17,13 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 1. 시스템 환경 변수 읽기 (값이 없을 경우를 대비해 Elvis 연산자로 기본값 지정 추천)
+        val envApiUrl = System.getenv("SMS_TRANSMITTER_BASE_URL") ?: "http://0.0.0.0"
+        val envApiPort = System.getenv("SMS_TRANSMITTER_PORT") ?: "54323"
+
+        buildConfigField("String", "BASE_URL", "\"$envApiUrl\"")
+        buildConfigField("int", "PORT", envApiPort)
     }
 
     buildFeatures {
