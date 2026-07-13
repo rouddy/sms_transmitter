@@ -20,7 +20,7 @@ class SmsLimitSettings(context: Context) {
             monthlyLimit = readLimit(KEY_MONTHLY_LIMIT),
             overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false),
             serverUrl = preferences.getString(KEY_SERVER_URL, null)?.trim()?.takeIf { it.isNotBlank() }
-                ?: BuildConfig.BASE_URL,
+                ?: "${BuildConfig.BASE_URL}:${BuildConfig.PORT}",
         )
     }
 

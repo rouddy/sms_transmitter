@@ -24,4 +24,4 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
 
 - `SEND_SMS` 권한 허용
 - Firebase Console에서 발급한 `google-services.json` 파일을 `app/google-services.json` 경로에 추가
-- Environment variable에 SMS_TRANSMITTER_BASE_URL와 SMS_TRANSMITTER_PORT를 설정(설정하지 않으면 http://0.0.0.0, 54323으로 동작)
+- Environment variable에 SMS_TRANSMITTER_BASE_URL와 SMS_TRANSMITTER_PORT를 설정(설정하지 않으면 ``http://{Build중인 pc의 ip}``, 54323으로 동작)

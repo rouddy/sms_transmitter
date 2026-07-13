@@ -1,8 +1,28 @@
+import java.net.Inet4Address
+import java.net.NetworkInterface
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.gms.google-services")
     id("com.google.android.libraries.mapsplatform.secrets-gradle-plugin")
+}
+
+/**
+ * en0 인터페이스(macOS Wi-Fi)에서 IPv4 주소를 읽어 반환합니다.
+ * 인터페이스를 찾을 수 없거나 오류가 발생하면 null을 반환합니다.
+ */
+fun getEn0IpAddress(): String? {
+    return try {
+        NetworkInterface.getByName("en0")
+            ?.inetAddresses
+            ?.toList()
+            ?.filterIsInstance<Inet4Address>()
+            ?.firstOrNull { !it.isLoopbackAddress }
+            ?.hostAddress
+    } catch (e: Exception) {
+        null
+    }
 }
 
 android {
@@ -18,9 +38,25 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // 1. 시스템 환경 변수 읽기 (값이 없을 경우를 대비해 Elvis 연산자로 기본값 지정 추천)
-        val envApiUrl = System.getenv("SMS_TRANSMITTER_BASE_URL") ?: "http://0.0.0.0"
+        // 1. 시스템 환경 변수 우선 적용
+        // SMS_TRANSMITTER_BASE_URL 환경변수가 설정되어 있으면 그 값을 사용하고,
+        // 없으면 en0 인터페이스(macOS Wi-Fi)에서 IP를 자동 감지합니다.
+        // CI/서버 환경: SMS_TRANSMITTER_BASE_URL 환경변수를 명시적으로 설정하세요.
+        // 로컬 개발:   환경변수 없이 빌드하면 자동으로 로컬 IP가 적용됩니다.
+        val envApiUrl = System.getenv("SMS_TRANSMITTER_BASE_URL")
+            ?: run {
+                val detectedIp = getEn0IpAddress()
+                if (detectedIp != null) {
+                    println(">>> [auto] en0 IP 자동 감지: $detectedIp")
+                    "http://$detectedIp"
+                } else {
+                    println(">>> [auto] en0 IP를 찾을 수 없습니다. 기본값 사용.")
+                    "http://0.0.0.0"
+                }
+            }
         val envApiPort = System.getenv("SMS_TRANSMITTER_PORT") ?: "54323"
+
+        println(">>> BASE_URL = $envApiUrl")
 
         buildConfigField("String", "BASE_URL", "\"$envApiUrl\"")
         buildConfigField("int", "PORT", envApiPort)
