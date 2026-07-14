@@ -6,7 +6,6 @@ use uuid::Uuid;
 use crate::entity::{fcm_token, sms_request};
 use crate::firebase::FirebaseClient;
 
-pub const STATUS_PENDING: &str = "Pending";
 pub const STATUS_SENDING: &str = "Sending";
 pub const STATUS_SENT: &str = "Sent";
 pub const STATUS_FAILED: &str = "Failed";
@@ -84,14 +83,21 @@ impl SmsRequestMutation {
         &self,
         ctx: &Context<'_>,
         input: RequestSmsInput,
-    ) -> Result<SmsRequest> {
-        let db = ctx.data::<DatabaseConnection>()?;
-        let firebase = ctx.data::<std::sync::Arc<FirebaseClient>>()?;
+    ) -> Result<SmsRequest, String> {
+        let db = ctx
+            .data::<DatabaseConnection>()
+            .expect("Load Database Error");
+        let firebase = ctx
+            .data::<std::sync::Arc<FirebaseClient>>()
+            .expect("Load Firebase client Error");
         let now = Local::now().naive_local();
 
-        let txn = db.begin().await?;
+        let txn = db.begin().await.expect("Transaction begin error");
 
-        let tokens = fcm_token::Entity::find().all(&txn).await?;
+        let tokens = fcm_token::Entity::find()
+            .all(&txn)
+            .await
+            .expect("Find Tokens Error");
 
         let selected = tokens
             .iter()
@@ -105,6 +111,7 @@ impl SmsRequestMutation {
             .or_else(|| {
                 tokens
                     .iter()
+                    .filter(|token| token.monthly_remaining_ratio() > 0.0)
                     .max_by(|a, b| {
                         a.monthly_remaining_ratio()
                             .partial_cmp(&b.monthly_remaining_ratio())
@@ -113,12 +120,15 @@ impl SmsRequestMutation {
                     .cloned()
             });
 
+        if selected.is_none() {
+            return Err("남은 sms 쿼터가 없습니다.".to_string());
+        }
+
         let request_id = Uuid::new_v4();
-        let (status, assigned_token_id) = if let Some(ref token) = selected {
-            (STATUS_SENDING.to_string(), Some(token.id))
-        } else {
-            (STATUS_PENDING.to_string(), None)
-        };
+
+        let status = STATUS_SENDING.to_string();
+        let token = selected.clone().unwrap();
+        let assigned_token_id = selected.map(|m| m.id);
 
         let sms_active = sms_request::ActiveModel {
             id: Set(request_id),
@@ -132,47 +142,45 @@ impl SmsRequestMutation {
             updated_at: Set(now),
         };
 
-        let sms_model = sms_active.insert(&txn).await?;
-        txn.commit().await?;
+        let sms_model = sms_active.insert(&txn).await.expect("Sms Insert Error");
+        txn.commit().await.expect("Transaction commit error");
 
-        if let Some(token) = selected {
-            let firebase = firebase.clone();
-            let phone_number = input.phone_number.clone();
-            let message = input.message.clone();
-            let callback_url = input.callback_url.clone();
-            let fcm_token_str = token.token.clone();
-            let db_clone = db.clone();
+        let firebase = firebase.clone();
+        let phone_number = input.phone_number.clone();
+        let message = input.message.clone();
+        let callback_url = input.callback_url.clone();
+        let fcm_token_str = token.token.clone();
+        let db_clone = db.clone();
 
-            tokio::spawn(async move {
-                match firebase
-                    .send_sms_request(
-                        &fcm_token_str,
-                        &request_id.to_string(),
-                        &phone_number,
-                        &message,
-                        callback_url.as_deref(),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        tracing::info!("FCM message dispatched for request {request_id}");
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to send FCM message for request {request_id}: {e}");
-                        if let Ok(Some(req)) = sms_request::Entity::find_by_id(request_id)
-                            .one(&db_clone)
-                            .await
-                        {
-                            let mut active: sms_request::ActiveModel = req.into();
-                            active.status = Set(STATUS_FAILED.to_string());
-                            active.error = Set(Some(e.to_string()));
-                            active.updated_at = Set(Local::now().naive_local());
-                            let _ = active.update(&db_clone).await;
-                        }
+        tokio::spawn(async move {
+            match firebase
+                .send_sms_request(
+                    &fcm_token_str,
+                    &request_id.to_string(),
+                    &phone_number,
+                    &message,
+                    callback_url.as_deref(),
+                )
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!("FCM message dispatched for request {request_id}");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to send FCM message for request {request_id}: {e}");
+                    if let Ok(Some(req)) = sms_request::Entity::find_by_id(request_id)
+                        .one(&db_clone)
+                        .await
+                    {
+                        let mut active: sms_request::ActiveModel = req.into();
+                        active.status = Set(STATUS_FAILED.to_string());
+                        active.error = Set(Some(e.to_string()));
+                        active.updated_at = Set(Local::now().naive_local());
+                        let _ = active.update(&db_clone).await;
                     }
                 }
-            });
-        }
+            }
+        });
 
         Ok(SmsRequest::from(sms_model))
     }
