@@ -24,8 +24,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
             token = token,
             deviceInfo = deviceInfo,
-            dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
-            monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+            dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
+            monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
         )
             .subscribeOn(Schedulers.io())
             .subscribe(
@@ -200,7 +200,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "FirebaseSmsService"
-        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
     }
 }
 

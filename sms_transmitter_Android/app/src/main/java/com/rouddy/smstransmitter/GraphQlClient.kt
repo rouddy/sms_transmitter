@@ -84,6 +84,8 @@ class GraphQlClient(private val serverUrl: String) {
 
     companion object {
         private const val TAG = "GraphQlClient"
+
+        const val LIMIT_UNLIMITED = 0
     }
 }
 

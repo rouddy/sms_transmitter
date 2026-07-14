@@ -197,8 +197,8 @@ class SettingsActivity : AppCompatActivity() {
             GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
                 deviceInfo = deviceInfo,
-                dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
-                monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+                dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
+                monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
                 .subscribeOn(Schedulers.io())
                 .subscribe(
@@ -219,6 +219,5 @@ class SettingsActivity : AppCompatActivity() {
         private const val TAG = "SettingsActivity"
         private const val EMPTY_LIMIT = -1
         private const val INVALID_LIMIT = -2
-        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
     }
 }

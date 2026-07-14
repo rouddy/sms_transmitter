@@ -109,8 +109,8 @@ class MainActivity : AppCompatActivity() {
             val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
                 deviceInfo = deviceInfo,
-                dailyLimit = config.dailyLimit ?: LIMIT_UNLIMITED,
-                monthlyLimit = config.monthlyLimit ?: LIMIT_UNLIMITED,
+                dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
+                monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
@@ -229,8 +229,5 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
-        // Sent to the server when no local limit is configured; effectively unlimited since
-        // daily/monthly counters reset periodically and will never approach this value.
-        private const val LIMIT_UNLIMITED = Int.MAX_VALUE
     }
 }
