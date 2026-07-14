@@ -1,6 +1,8 @@
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    sea_query::OnConflict, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+};
 use uuid::Uuid;
 
 use crate::entity::fcm_token;
@@ -60,34 +62,40 @@ impl FcmTokenMutation {
         let now = Local::now().naive_local();
         let today = now.date();
 
-        let existing = fcm_token::Entity::find()
-            .filter(fcm_token::Column::Token.eq(&input.token))
-            .one(db)
+        let token = input.token.clone();
+        let active = fcm_token::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            token: Set(input.token),
+            device_info: Set(input.device_info),
+            daily_limit: Set(input.daily_limit),
+            monthly_limit: Set(input.monthly_limit),
+            daily_sent_count: Set(0),
+            monthly_sent_count: Set(0),
+            last_daily_reset: Set(today),
+            last_monthly_reset: Set(today),
+            created_at: Set(now),
+            updated_at: Set(now),
+        };
+
+        fcm_token::Entity::insert(active)
+            .on_conflict(
+                OnConflict::column(fcm_token::Column::Token)
+                    .update_columns([
+                        fcm_token::Column::DeviceInfo,
+                        fcm_token::Column::DailyLimit,
+                        fcm_token::Column::MonthlyLimit,
+                        fcm_token::Column::UpdatedAt,
+                    ])
+                    .to_owned(),
+            )
+            .exec(db)
             .await?;
 
-        let model = if let Some(existing) = existing {
-            let mut active: fcm_token::ActiveModel = existing.into();
-            active.device_info = Set(input.device_info);
-            active.daily_limit = Set(input.daily_limit);
-            active.monthly_limit = Set(input.monthly_limit);
-            active.updated_at = Set(now);
-            active.update(db).await?
-        } else {
-            let active = fcm_token::ActiveModel {
-                id: Set(Uuid::new_v4()),
-                token: Set(input.token),
-                device_info: Set(input.device_info),
-                daily_limit: Set(input.daily_limit),
-                monthly_limit: Set(input.monthly_limit),
-                daily_sent_count: Set(0),
-                monthly_sent_count: Set(0),
-                last_daily_reset: Set(today),
-                last_monthly_reset: Set(today),
-                created_at: Set(now),
-                updated_at: Set(now),
-            };
-            active.insert(db).await?
-        };
+        let model = fcm_token::Entity::find()
+            .filter(fcm_token::Column::Token.eq(token))
+            .one(db)
+            .await?
+            .ok_or_else(|| async_graphql::Error::new("failed to load registered fcm token"))?;
 
         Ok(FcmToken::from(model))
     }
