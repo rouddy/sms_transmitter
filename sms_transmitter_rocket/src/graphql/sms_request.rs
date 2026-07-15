@@ -12,7 +12,6 @@ pub const STATUS_FAILED: &str = "Failed";
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SmsStatus {
-    Pending,
     Sending,
     Sent,
     Failed,
@@ -24,7 +23,7 @@ impl SmsStatus {
             STATUS_SENDING => Self::Sending,
             STATUS_SENT => Self::Sent,
             STATUS_FAILED => Self::Failed,
-            _ => Self::Pending,
+            _ => Self::Failed,
         }
     }
 }
