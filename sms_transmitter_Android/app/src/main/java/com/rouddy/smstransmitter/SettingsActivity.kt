@@ -118,7 +118,12 @@ class SettingsActivity : AppCompatActivity() {
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
-        smsLimitSettings.saveServerUrl(serverUrlInput.text?.toString()?.trim()?.takeIf { it.isNotBlank() })
+        val serverUrl = serverUrlInput.text?.toString()?.trim()
+        if (serverUrl?.isEmpty() == true) {
+            smsLimitSettings.removeServerUrl()
+        } else if (!smsLimitSettings.getConfig().serverUrl.equals(serverUrl)) {
+            smsLimitSettings.saveServerUrl(serverUrl)
+        }
         applyOverlayState(shouldEnableOverlay)
         registerFcmTokenWithServer()
 

@@ -37,6 +37,12 @@ class SmsLimitSettings(context: Context) {
             .apply()
     }
 
+    fun removeServerUrl() {
+        preferences.edit()
+            .remove(KEY_SERVER_URL)
+            .apply()
+    }
+
     fun setOverlayEnabled(enabled: Boolean) {
         preferences.edit()
             .putBoolean(KEY_OVERLAY_ENABLED, enabled)
