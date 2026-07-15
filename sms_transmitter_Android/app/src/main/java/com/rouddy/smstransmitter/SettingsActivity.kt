@@ -118,10 +118,16 @@ class SettingsActivity : AppCompatActivity() {
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
-        val serverUrl = serverUrlInput.text?.toString()?.trim()
+        val serverUrl = serverUrlInput.text
+            ?.toString()?.trim()
+            ?.let {
+                URL_PATTERN.find(it)?.let { matchResult ->
+                    matchResult.groupValues[1]
+                }
+            }
         if (serverUrl?.isEmpty() == true) {
             smsLimitSettings.removeServerUrl()
-        } else if (!smsLimitSettings.getConfig().serverUrl.equals(serverUrl)) {
+        } else if (serverUrl?.equals(smsLimitSettings.getConfig().serverUrl) == false) {
             smsLimitSettings.saveServerUrl(serverUrl)
         }
         applyOverlayState(shouldEnableOverlay)
@@ -224,5 +230,6 @@ class SettingsActivity : AppCompatActivity() {
         private const val TAG = "SettingsActivity"
         private const val EMPTY_LIMIT = -1
         private const val INVALID_LIMIT = -2
+        private val URL_PATTERN = "^(https?://[^/]*)/?$".toRegex()
     }
 }
