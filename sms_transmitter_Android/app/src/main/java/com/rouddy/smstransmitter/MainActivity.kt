@@ -116,7 +116,10 @@ class MainActivity : AppCompatActivity() {
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     { Log.i(TAG, "FCM token registered with server from MainActivity.") },
-                    { Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it) },
+                    {
+                        Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
+                        Toast.makeText(this@MainActivity, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
+                    },
                 )
             disposables.add(disposable)
         }

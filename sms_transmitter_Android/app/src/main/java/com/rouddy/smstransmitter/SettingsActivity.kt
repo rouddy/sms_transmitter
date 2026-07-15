@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.switchmaterial.SwitchMaterial
 import com.google.firebase.messaging.FirebaseMessaging
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 
@@ -212,9 +213,13 @@ class SettingsActivity : AppCompatActivity() {
                 monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
                 .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(
                     { Log.i(TAG, "FCM token registered with server from SettingsActivity.") },
-                    { Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it) },
+                    {
+                        Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it)
+                        Toast.makeText(this@SettingsActivity, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
+                    },
                 )
                 .also { disposables.add(it) }
         }
