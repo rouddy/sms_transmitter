@@ -446,6 +446,12 @@ pub struct SmsRequestQuery;
 
 #[Object]
 impl SmsRequestQuery {
+    pub async fn sms_requests(&self, ctx: &Context<'_>) -> Result<Vec<SmsRequest>> {
+        let db = ctx.data::<DatabaseConnection>()?;
+        let requests = sms_request::Entity::find().all(db).await?;
+        Ok(requests.into_iter().map(SmsRequest::from).collect())
+    }
+
     pub async fn sms_request(&self, ctx: &Context<'_>, id: ID) -> Result<Option<SmsRequest>> {
         let db = ctx.data::<DatabaseConnection>()?;
         let request_id =
