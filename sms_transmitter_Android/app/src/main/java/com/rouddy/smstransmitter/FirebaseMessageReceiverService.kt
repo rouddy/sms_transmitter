@@ -49,8 +49,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
                 smsSuccess = smsResult.success,
-                smsError = smsResult.error,
-                callbackUrl = null
+                smsError = smsResult.error
             )
             val now = System.currentTimeMillis()
             val dailySentCount = historyDb.countSuccessfulSmsBetween(
