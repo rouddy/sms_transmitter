@@ -15,8 +15,16 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(SmsRequests::Table)
-                    .add_column(ColumnDef::new(SmsRequests::CallbackResponseCode).integer().null())
-                    .add_column(ColumnDef::new(SmsRequests::CallbackResponseBody).text().null())
+                    .add_column(
+                        ColumnDef::new(SmsRequests::CallbackResponseCode)
+                            .integer()
+                            .null(),
+                    )
+                    .add_column(
+                        ColumnDef::new(SmsRequests::CallbackResponseBody)
+                            .text()
+                            .null(),
+                    )
                     .to_owned(),
             )
             .await

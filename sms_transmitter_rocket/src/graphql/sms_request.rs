@@ -13,6 +13,7 @@ use crate::firebase::FirebaseClient;
 pub const STATUS_SENDING: &str = "Sending";
 pub const STATUS_SENT: &str = "Sent";
 pub const STATUS_FAILED: &str = "Failed";
+const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SmsStatus {
@@ -162,7 +163,12 @@ impl SmsRequestMutation {
 
         tokio::spawn(async move {
             match firebase
-                .send_sms_request(&fcm_token_str, &request_id.to_string(), &phone_number, &message)
+                .send_sms_request(
+                    &fcm_token_str,
+                    &request_id.to_string(),
+                    &phone_number,
+                    &message,
+                )
                 .await
             {
                 Ok(_) => {
@@ -237,14 +243,30 @@ impl SmsRequestMutation {
         if let Some(callback_url) = callback_url {
             match invoke_callback_url(&callback_url).await {
                 Ok(response) => {
-                    if let Ok(Some(req)) = sms_request::Entity::find_by_id(request_id).one(db).await {
-                        let mut callback_active: sms_request::ActiveModel = req.into();
-                        callback_active.callback_response_code = Set(Some(response.status_code));
-                        callback_active.callback_response_body = Set(Some(response.body));
-                        callback_active.updated_at = Set(Local::now().naive_local());
-                        if let Err(e) = callback_active.update(db).await {
+                    match sms_request::Entity::find_by_id(request_id).one(db).await {
+                        Ok(Some(req)) => {
+                            let mut callback_active: sms_request::ActiveModel = req.into();
+                            callback_active.callback_response_code =
+                                Set(Some(response.status_code));
+                            callback_active.callback_response_body = Set(Some(response.body));
+                            callback_active.updated_at = Set(Local::now().naive_local());
+                            if let Err(e) = callback_active.update(db).await {
+                                tracing::error!(
+                                    "Failed to save callback response for request {:?}: {}",
+                                    input.request_id,
+                                    e
+                                );
+                            }
+                        }
+                        Ok(None) => {
                             tracing::error!(
-                                "Failed to save callback response for request {:?}: {}",
+                                "SMS request not found while saving callback response: {:?}",
+                                input.request_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to load SMS request while saving callback response for request {:?}: {}",
                                 input.request_id,
                                 e
                             );
@@ -285,7 +307,9 @@ async fn invoke_callback_url(callback_url: &str) -> std::result::Result<Callback
     let callback_host = validate_callback_url(&parsed_url)?;
     let client = match callback_host {
         CallbackHost::Ip => callback_http_client().clone(),
-        CallbackHost::Domain(domain) => build_callback_client_with_resolved_host(&domain, &parsed_url).await?,
+        CallbackHost::Domain(domain) => {
+            build_callback_client_with_resolved_host(&domain, &parsed_url).await?
+        }
     };
 
     let response = client
@@ -296,10 +320,14 @@ async fn invoke_callback_url(callback_url: &str) -> std::result::Result<Callback
         .map_err(|e| format!("Callback request failed: {e}"))?;
     let status_code = response.status().as_u16() as i32;
     let is_success = response.status().is_success();
-    let body = response
-        .text()
+    let body_bytes = response
+        .bytes()
         .await
         .map_err(|e| format!("Failed to read callback response body: {e}"))?;
+    let body = String::from_utf8_lossy(
+        &body_bytes[..body_bytes.len().min(CALLBACK_RESPONSE_BODY_MAX_BYTES)],
+    )
+    .to_string();
 
     Ok(CallbackResponse {
         status_code,
@@ -349,6 +377,7 @@ fn validate_callback_ip(ip: IpAddr) -> std::result::Result<(), String> {
                 || v6.is_loopback()
                 || v6.is_unspecified()
                 || v6.is_unicast_link_local()
+                || v6.is_multicast()
         }
     };
     if blocked_ip {
