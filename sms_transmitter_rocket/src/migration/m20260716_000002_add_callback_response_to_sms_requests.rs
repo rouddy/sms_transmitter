@@ -20,6 +20,14 @@ impl MigrationTrait for Migration {
                             .integer()
                             .null(),
                     )
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(SmsRequests::Table)
                     .add_column(
                         ColumnDef::new(SmsRequests::CallbackResponseBody)
                             .text()
@@ -36,6 +44,14 @@ impl MigrationTrait for Migration {
                 Table::alter()
                     .table(SmsRequests::Table)
                     .drop_column(SmsRequests::CallbackResponseCode)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .alter_table(
+                Table::alter()
+                    .table(SmsRequests::Table)
                     .drop_column(SmsRequests::CallbackResponseBody)
                     .to_owned(),
             )
