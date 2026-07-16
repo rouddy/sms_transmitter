@@ -13,6 +13,7 @@ A Rust backend for relaying SMS messages via Android devices using Firebase Clou
 
 1. Copy `.env.example` to `.env` and fill in your values.
 2. Place your Firebase service account JSON at the path set in `FIREBASE_CREDENTIALS_PATH`.
+  If `firebase-credentials.json` is missing from the project root and `FIREBASE_CREDENTIALS_PATH` is not set to another valid file, the server will fail to start.
 3. Run the server:
 
 ```bash
@@ -25,9 +26,30 @@ The server runs migrations automatically on startup.
 
 Navigate to `http://localhost:8000/graphiql` for the interactive explorer.
 
-### Mutations
+### FCM Token
 
-#### Register a device
+`FcmToken` fields:
+
+- `id`
+- `token`
+- `deviceInfo`
+- `dailyLimit`
+- `monthlyLimit`
+- `dailySentCount`
+- `monthlySentCount`
+- `dailyRemaining`
+- `monthlyRemaining`
+- `createdAt`
+- `updatedAt`
+
+`RegisterFcmTokenInput` fields:
+
+- `token`
+- `deviceInfo`
+- `dailyLimit`
+- `monthlyLimit`
+
+Register or update a device token:
 
 ```graphql
 mutation {
@@ -39,41 +61,20 @@ mutation {
   }) {
     id
     token
+    deviceInfo
+    dailyLimit
+    monthlyLimit
+    dailySentCount
+    monthlySentCount
     dailyRemaining
     monthlyRemaining
+    createdAt
+    updatedAt
   }
 }
 ```
 
-#### Send an SMS
-
-```graphql
-mutation {
-  requestSms(input: {
-    phoneNumber: "+1234567890"
-    message: "Hello from the server!"
-    callbackUrl: "https://example.com/callback"   # optional
-  }) {
-    id
-    status
-    assignedDeviceId
-  }
-}
-```
-
-#### Report result (called by Android app)
-
-```graphql
-mutation {
-  reportSmsResult(input: {
-    requestId: "<UUID>"
-    success: true
-    error: null
-  })
-}
-```
-
-### Queries
+List registered device tokens:
 
 ```graphql
 query {
@@ -81,17 +82,112 @@ query {
     id
     token
     deviceInfo
+    dailyLimit
+    monthlyLimit
+    dailySentCount
+    monthlySentCount
     dailyRemaining
     monthlyRemaining
+    createdAt
+    updatedAt
   }
 }
+```
 
+Delete a device token:
+
+```graphql
+mutation {
+  deleteFcmToken(tokenId: "<UUID>")
+}
+```
+
+Note: registering the same `token` again updates `deviceInfo`, `dailyLimit`, `monthlyLimit`, and `updatedAt`. Existing sent counts are preserved.
+
+### SMS Request
+
+`SmsStatus` values:
+
+- `Sending`
+- `Sent`
+- `Failed`
+
+`SmsRequest` fields:
+
+- `id`
+- `phoneNumber`
+- `message`
+- `callbackUrl`
+- `status`
+- `assignedDeviceId`
+- `error`
+- `createdAt`
+- `updatedAt`
+
+`RequestSmsInput` fields:
+
+- `phoneNumber`
+- `message`
+- `callbackUrl`
+
+`ReportSmsResultInput` fields:
+
+- `requestId`
+- `success`
+- `error`
+- `dailySentCount`
+- `monthlySentCount`
+
+Create an SMS request:
+
+```graphql
+mutation {
+  requestSms(input: {
+    phoneNumber: "+1234567890"
+    message: "Hello from the server!"
+    callbackUrl: "https://example.com/callback"
+  }) {
+    id
+    phoneNumber
+    message
+    callbackUrl
+    status
+    assignedDeviceId
+    error
+    createdAt
+    updatedAt
+  }
+}
+```
+
+Report the SMS delivery result from the Android app:
+
+```graphql
+mutation {
+  reportSmsResult(input: {
+    requestId: "<UUID>"
+    success: true
+    error: null
+    dailySentCount: 1
+    monthlySentCount: 10
+  })
+}
+```
+
+Fetch a single SMS request:
+
+```graphql
 query {
   smsRequest(id: "<UUID>") {
     id
-    status
     phoneNumber
+    message
+    callbackUrl
+    status
+    assignedDeviceId
     error
+    createdAt
+    updatedAt
   }
 }
 ```
