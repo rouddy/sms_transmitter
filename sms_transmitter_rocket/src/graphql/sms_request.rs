@@ -2,6 +2,8 @@ use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID
 use chrono::Local;
 use reqwest::Client;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
+use std::net::IpAddr;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 use crate::entity::{fcm_token, sms_request};
@@ -239,8 +241,52 @@ impl SmsRequestMutation {
     }
 }
 
-async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), reqwest::Error> {
-    Client::new().get(callback_url).send().await?.error_for_status()?;
+async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), String> {
+    let parsed_url =
+        reqwest::Url::parse(callback_url).map_err(|e| format!("Invalid callback URL: {e}"))?;
+    validate_callback_url(&parsed_url)?;
+    callback_http_client()
+        .get(parsed_url)
+        .send()
+        .await
+        .map_err(|e| format!("Callback request failed: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("Callback request failed: {e}"))?;
+    Ok(())
+}
+
+fn callback_http_client() -> &'static Client {
+    static CALLBACK_CLIENT: OnceLock<Client> = OnceLock::new();
+    CALLBACK_CLIENT.get_or_init(Client::new)
+}
+
+fn validate_callback_url(url: &reqwest::Url) -> std::result::Result<(), String> {
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err("Callback URL must use http/https".to_string());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "Callback URL must include a host".to_string())?;
+
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return Err("Localhost callback URL is not allowed".to_string());
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        let blocked_ip = match ip {
+            IpAddr::V4(v4) => {
+                v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+            }
+            IpAddr::V6(v6) => {
+                v6.is_unique_local() || v6.is_loopback() || v6.is_unspecified()
+            }
+        };
+        if blocked_ip {
+            return Err("Private or local callback IP is not allowed".to_string());
+        }
+    }
+
     Ok(())
 }
 
