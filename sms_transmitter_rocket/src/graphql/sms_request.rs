@@ -2,8 +2,9 @@ use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID
 use chrono::Local;
 use reqwest::Client;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::entity::{fcm_token, sms_request};
@@ -244,9 +245,15 @@ impl SmsRequestMutation {
 async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), String> {
     let parsed_url =
         reqwest::Url::parse(callback_url).map_err(|e| format!("Invalid callback URL: {e}"))?;
-    validate_callback_url(&parsed_url)?;
-    callback_http_client()
+    let callback_host = validate_callback_url(&parsed_url)?;
+    let client = match callback_host {
+        CallbackHost::Ip => callback_http_client().clone(),
+        CallbackHost::Domain(domain) => build_callback_client_with_resolved_host(&domain, &parsed_url).await?,
+    };
+
+    client
         .get(parsed_url)
+        .timeout(Duration::from_secs(5))
         .send()
         .await
         .map_err(|e| format!("Callback request failed: {e}"))?
@@ -260,7 +267,12 @@ fn callback_http_client() -> &'static Client {
     CALLBACK_CLIENT.get_or_init(Client::new)
 }
 
-fn validate_callback_url(url: &reqwest::Url) -> std::result::Result<(), String> {
+enum CallbackHost {
+    Ip,
+    Domain(String),
+}
+
+fn validate_callback_url(url: &reqwest::Url) -> std::result::Result<CallbackHost, String> {
     if url.scheme() != "http" && url.scheme() != "https" {
         return Err("Callback URL must use http/https".to_string());
     }
@@ -274,20 +286,55 @@ fn validate_callback_url(url: &reqwest::Url) -> std::result::Result<(), String> 
     }
 
     if let Ok(ip) = host.parse::<IpAddr>() {
-        let blocked_ip = match ip {
-            IpAddr::V4(v4) => {
-                v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
-            }
-            IpAddr::V6(v6) => {
-                v6.is_unique_local() || v6.is_loopback() || v6.is_unspecified()
-            }
-        };
-        if blocked_ip {
-            return Err("Private or local callback IP is not allowed".to_string());
-        }
+        validate_callback_ip(ip)?;
+        return Ok(CallbackHost::Ip);
     }
 
+    Ok(CallbackHost::Domain(host.to_string()))
+}
+
+fn validate_callback_ip(ip: IpAddr) -> std::result::Result<(), String> {
+    let blocked_ip = match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_unique_local()
+                || v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unicast_link_local()
+        }
+    };
+    if blocked_ip {
+        return Err("Private or local callback IP is not allowed".to_string());
+    }
     Ok(())
+}
+
+async fn build_callback_client_with_resolved_host(
+    domain: &str,
+    url: &reqwest::Url,
+) -> std::result::Result<Client, String> {
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "Callback URL must include a known port".to_string())?;
+    let resolved_addrs: Vec<SocketAddr> = tokio::net::lookup_host((domain, port))
+        .await
+        .map_err(|e| format!("Failed to resolve callback host: {e}"))?
+        .collect();
+
+    if resolved_addrs.is_empty() {
+        return Err("Callback host did not resolve to any address".to_string());
+    }
+
+    for addr in &resolved_addrs {
+        validate_callback_ip(addr.ip())?;
+    }
+
+    reqwest::Client::builder()
+        .resolve_to_addrs(domain, &resolved_addrs)
+        .build()
+        .map_err(|e| format!("Failed to build callback HTTP client: {e}"))
 }
 
 #[derive(Default)]
