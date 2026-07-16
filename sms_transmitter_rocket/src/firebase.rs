@@ -116,19 +116,14 @@ impl FirebaseClient {
         request_id: &str,
         phone_number: &str,
         message: &str,
-        callback_url: Option<&str>,
     ) -> Result<()> {
         let access_token = self.get_access_token().await?;
 
-        let mut data = serde_json::json!({
+        let data = serde_json::json!({
             "requestId": request_id,
             "phoneNumber": phone_number,
             "message": message,
         });
-
-        if let Some(url) = callback_url {
-            data["callback"] = serde_json::Value::String(url.to_string());
-        }
 
         let body = serde_json::json!({
             "message": {

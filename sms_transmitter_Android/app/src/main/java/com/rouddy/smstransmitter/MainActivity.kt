@@ -140,21 +140,12 @@ class MainActivity : AppCompatActivity() {
             } else {
                 getString(R.string.sms_failure)
             }
-            val callbackStatus = when (item.callbackSuccess) {
-                true -> getString(R.string.callback_success)
-                false -> getString(R.string.callback_failure)
-                null -> getString(R.string.callback_pending)
-            }
             buildString {
                 append("시간: ${historyDateFormatter.format(Date(item.createdAtMillis))}\n")
                 append("수신번호: ${item.phoneNumber}\n")
                 append("메시지: ${item.message}\n")
                 append("SMS: $smsStatus")
                 if (!item.smsError.isNullOrBlank()) append(" (${item.smsError})")
-                append("\n")
-                append("Callback: $callbackStatus")
-                if (!item.callbackUrl.isNullOrBlank()) append(" [${item.callbackUrl}]")
-                if (!item.callbackError.isNullOrBlank()) append(" (${item.callbackError})")
             }
         }
         historyContentView.text = content

@@ -4,8 +4,8 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
 
 - key `phoneNumber`: SMS 수신 번호
 - key `message`: SMS 본문으로 발송
-- key `callback`: 발송 후 해당 URL 호출
-- SMS 전송 결과 및 callback 결과를 SQLite에 저장하고 메인 화면에서 확인
+- key `requestId`: 서버로 결과 보고 시 사용
+- SMS 전송 결과를 SQLite에 저장하고 메인 화면에서 확인
 
 ## FCM data payload 예시
 
@@ -15,7 +15,7 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
   "data": {
     "phoneNumber": "01012345678",
     "message": "테스트 메시지",
-    "callback": "https://example.com/callback"
+    "requestId": "<UUID>"
   }
 }
 ```

@@ -50,18 +50,18 @@ class FcmPayloadParserTest {
             mapOf(
                 "phoneNumber" to "  01012345678  ",
                 "message" to "  hello sms  ",
-                "callback" to " https://example.com/callback "
+                "requestId" to " req-123 "
             )
         )
 
         requireNotNull(payload)
         assertEquals("01012345678", payload.phoneNumber)
         assertEquals("hello sms", payload.message)
-        assertEquals("https://example.com/callback", payload.callback)
+        assertEquals("req-123", payload.requestId)
     }
 
     @Test
-    fun `returns null callback when callback is missing`() {
+    fun `returns null requestId when requestId is missing`() {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to "01012345678",
@@ -70,6 +70,6 @@ class FcmPayloadParserTest {
         )
 
         requireNotNull(payload)
-        assertNull(payload.callback)
+        assertNull(payload.requestId)
     }
 }

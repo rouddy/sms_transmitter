@@ -1,6 +1,10 @@
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
+use reqwest::Client;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::OnceLock;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::entity::{fcm_token, sms_request};
@@ -9,6 +13,7 @@ use crate::firebase::FirebaseClient;
 pub const STATUS_SENDING: &str = "Sending";
 pub const STATUS_SENT: &str = "Sent";
 pub const STATUS_FAILED: &str = "Failed";
+const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SmsStatus {
@@ -34,6 +39,8 @@ pub struct SmsRequest {
     pub phone_number: String,
     pub message: String,
     pub callback_url: Option<String>,
+    pub callback_response_code: Option<i32>,
+    pub callback_response_body: Option<String>,
     pub status: SmsStatus,
     pub assigned_device_id: Option<ID>,
     pub error: Option<String>,
@@ -50,6 +57,8 @@ impl From<sms_request::Model> for SmsRequest {
             phone_number: m.phone_number,
             message: m.message,
             callback_url: m.callback_url,
+            callback_response_code: m.callback_response_code,
+            callback_response_body: m.callback_response_body,
             error: m.error,
             created_at: m.created_at.to_string(),
             updated_at: m.updated_at.to_string(),
@@ -134,6 +143,8 @@ impl SmsRequestMutation {
             phone_number: Set(input.phone_number.clone()),
             message: Set(input.message.clone()),
             callback_url: Set(input.callback_url.clone()),
+            callback_response_code: Set(None),
+            callback_response_body: Set(None),
             status: Set(status),
             assigned_token_id: Set(assigned_token_id),
             error: Set(None),
@@ -147,7 +158,6 @@ impl SmsRequestMutation {
         let firebase = firebase.clone();
         let phone_number = input.phone_number.clone();
         let message = input.message.clone();
-        let callback_url = input.callback_url.clone();
         let fcm_token_str = token.token.clone();
         let db_clone = db.clone();
 
@@ -158,7 +168,6 @@ impl SmsRequestMutation {
                     &request_id.to_string(),
                     &phone_number,
                     &message,
-                    callback_url.as_deref(),
                 )
                 .await
             {
@@ -217,6 +226,7 @@ impl SmsRequestMutation {
             token_active.update(&txn).await?;
         }
 
+        let callback_url = request.callback_url.clone();
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
             active.status = Set(STATUS_SENT.to_string());
@@ -230,8 +240,205 @@ impl SmsRequestMutation {
 
         txn.commit().await?;
 
+        if let Some(callback_url) = callback_url {
+            match invoke_callback_url(&callback_url).await {
+                Ok(response) => {
+                    match sms_request::Entity::find_by_id(request_id).one(db).await {
+                        Ok(Some(req)) => {
+                            let mut callback_active: sms_request::ActiveModel = req.into();
+                            callback_active.callback_response_code =
+                                Set(Some(response.status_code));
+                            callback_active.callback_response_body = Set(Some(response.body));
+                            callback_active.updated_at = Set(Local::now().naive_local());
+                            if let Err(e) = callback_active.update(db).await {
+                                tracing::error!(
+                                    "Failed to save callback response for request {:?}: {}",
+                                    input.request_id,
+                                    e
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            tracing::error!(
+                                "SMS request not found while saving callback response: {:?}",
+                                input.request_id
+                            );
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to load SMS request while saving callback response for request {:?}: {}",
+                                input.request_id,
+                                e
+                            );
+                        }
+                    }
+
+                    if !response.is_success {
+                        tracing::error!(
+                            "Callback URL returned non-success status for request {:?}: {}",
+                            input.request_id,
+                            response.status_code
+                        );
+                    }
+                }
+                Err(e) => {
+                    match sms_request::Entity::find_by_id(request_id).one(db).await {
+                        Ok(Some(req)) => {
+                            let mut callback_active: sms_request::ActiveModel = req.into();
+                            callback_active.callback_response_code = Set(Some(-1));
+                            callback_active.callback_response_body = Set(Some(e.clone()));
+                            callback_active.updated_at = Set(Local::now().naive_local());
+                            if let Err(save_err) = callback_active.update(db).await {
+                                tracing::error!(
+                                    "Failed to save callback error response for request {:?}: {}",
+                                    input.request_id,
+                                    save_err
+                                );
+                            }
+                        }
+                        Ok(None) => {
+                            tracing::error!(
+                                "SMS request not found while saving callback error response: {:?}",
+                                input.request_id
+                            );
+                        }
+                        Err(load_err) => {
+                            tracing::error!(
+                                "Failed to load SMS request while saving callback error response for request {:?}: {}",
+                                input.request_id,
+                                load_err
+                            );
+                        }
+                    }
+
+                    tracing::error!(
+                        "Failed to call callback URL for request {:?}: {}",
+                        input.request_id,
+                        e
+                    );
+                }
+            }
+        }
+
         Ok(true)
     }
+}
+
+struct CallbackResponse {
+    status_code: i32,
+    body: String,
+    is_success: bool,
+}
+
+async fn invoke_callback_url(callback_url: &str) -> std::result::Result<CallbackResponse, String> {
+    let parsed_url =
+        reqwest::Url::parse(callback_url).map_err(|e| format!("Invalid callback URL: {e}"))?;
+    let callback_host = validate_callback_url(&parsed_url)?;
+    let client = match callback_host {
+        CallbackHost::Ip => callback_http_client().clone(),
+        CallbackHost::Domain(domain) => {
+            build_callback_client_with_resolved_host(&domain, &parsed_url).await?
+        }
+    };
+
+    let response = client
+        .get(parsed_url)
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("Callback request failed: {e}"))?;
+    let status_code = response.status().as_u16() as i32;
+    let is_success = response.status().is_success();
+    let body_bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read callback response body: {e}"))?;
+    let body = String::from_utf8_lossy(
+        &body_bytes[..body_bytes.len().min(CALLBACK_RESPONSE_BODY_MAX_BYTES)],
+    )
+    .to_string();
+
+    Ok(CallbackResponse {
+        status_code,
+        body,
+        is_success,
+    })
+}
+
+fn callback_http_client() -> &'static Client {
+    static CALLBACK_CLIENT: OnceLock<Client> = OnceLock::new();
+    CALLBACK_CLIENT.get_or_init(Client::new)
+}
+
+enum CallbackHost {
+    Ip,
+    Domain(String),
+}
+
+fn validate_callback_url(url: &reqwest::Url) -> std::result::Result<CallbackHost, String> {
+    if url.scheme() != "http" && url.scheme() != "https" {
+        return Err("Callback URL must use http/https".to_string());
+    }
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| "Callback URL must include a host".to_string())?;
+
+    if host.eq_ignore_ascii_case("localhost") || host.to_ascii_lowercase().ends_with(".localhost") {
+        return Err("Localhost callback URL is not allowed".to_string());
+    }
+
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        validate_callback_ip(ip)?;
+        return Ok(CallbackHost::Ip);
+    }
+
+    Ok(CallbackHost::Domain(host.to_string()))
+}
+
+fn validate_callback_ip(ip: IpAddr) -> std::result::Result<(), String> {
+    let blocked_ip = match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_unique_local()
+                || v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_unicast_link_local()
+                || v6.is_multicast()
+        }
+    };
+    if blocked_ip {
+        return Err("Private or local callback IP is not allowed".to_string());
+    }
+    Ok(())
+}
+
+async fn build_callback_client_with_resolved_host(
+    domain: &str,
+    url: &reqwest::Url,
+) -> std::result::Result<Client, String> {
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| "Callback URL must include a known port".to_string())?;
+    let resolved_addrs: Vec<SocketAddr> = tokio::net::lookup_host((domain, port))
+        .await
+        .map_err(|e| format!("Failed to resolve callback host: {e}"))?
+        .collect();
+
+    if resolved_addrs.is_empty() {
+        return Err("Callback host did not resolve to any address".to_string());
+    }
+
+    for addr in &resolved_addrs {
+        validate_callback_ip(addr.ip())?;
+    }
+
+    reqwest::Client::builder()
+        .resolve_to_addrs(domain, &resolved_addrs)
+        .build()
+        .map_err(|e| format!("Failed to build callback HTTP client: {e}"))
 }
 
 #[derive(Default)]

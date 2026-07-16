@@ -28,10 +28,7 @@ async fn graphql_request(schema: &State<AppSchema>, request: GraphQLRequest) -> 
 
 #[get("/graphiql")]
 fn graphiql() -> rocket::response::content::RawHtml<String> {
-    rocket::response::content::RawHtml(async_graphql::http::graphiql_source(
-        "/graphql",
-        None,
-    ))
+    rocket::response::content::RawHtml(async_graphql::http::graphiql_source("/graphql", None))
 }
 
 #[launch]
@@ -40,8 +37,7 @@ async fn rocket() -> _ {
 
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 

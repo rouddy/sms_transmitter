@@ -10,6 +10,8 @@ pub struct Model {
     pub phone_number: String,
     pub message: String,
     pub callback_url: Option<String>,
+    pub callback_response_code: Option<i32>,
+    pub callback_response_body: Option<String>,
     pub status: String,
     pub assigned_token_id: Option<Uuid>,
     pub error: Option<String>,

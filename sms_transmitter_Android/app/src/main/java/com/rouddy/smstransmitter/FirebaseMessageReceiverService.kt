@@ -43,14 +43,13 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         val historyDb = SmsHistoryDatabase(applicationContext)
-        val historyRowId = try {
+        try {
             val smsResult = sendSmsSafely(payload.phoneNumber, payload.message, historyDb)
-            val rowId = historyDb.insertSmsHistory(
+            historyDb.insertSmsHistory(
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
                 smsSuccess = smsResult.success,
-                smsError = smsResult.error,
-                callbackUrl = payload.callback
+                smsError = smsResult.error
             )
             val now = System.currentTimeMillis()
             val dailySentCount = historyDb.countSuccessfulSmsBetween(
@@ -62,12 +61,9 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 SmsLimitSettings.getStartOfNextMonthMillis(now)
             )
             reportSmsResultSafely(payload.requestId, smsResult, dailySentCount, monthlySentCount)
-            rowId
         } finally {
             historyDb.close()
         }
-
-        triggerCallbackSafely(payload.callback, historyRowId)
     }
 
     private fun sendSmsSafely(
@@ -151,43 +147,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         disposables.add(disposable)
     }
 
-    private fun triggerCallbackSafely(callbackUrl: String?, rowId: Long) {
-        if (callbackUrl.isNullOrBlank()) return
-
-        val callbackService = RetrofitClientProvider.create(
-            "http://placeholder.internal/",
-            CallbackApiService::class.java,
-        )
-
-        val disposable = callbackService.get(callbackUrl)
-            .subscribeOn(Schedulers.io())
-            .subscribe(
-                { responseBody ->
-                    responseBody.close()
-                    val historyDb = SmsHistoryDatabase(applicationContext)
-                    try {
-                        historyDb.updateCallbackResult(rowId, callbackSuccess = true, callbackError = null)
-                    } finally {
-                        historyDb.close()
-                    }
-                },
-                { error ->
-                    Log.e(TAG, "Failed to call callback URL.", error)
-                    val historyDb = SmsHistoryDatabase(applicationContext)
-                    try {
-                        historyDb.updateCallbackResult(
-                            rowId = rowId,
-                            callbackSuccess = false,
-                            callbackError = error.message ?: "Failed to call callback URL.",
-                        )
-                    } finally {
-                        historyDb.close()
-                    }
-                },
-            )
-        disposables.add(disposable)
-    }
-
     override fun onDestroy() {
         disposables.clear()
         super.onDestroy()
@@ -207,4 +166,3 @@ private data class SendSmsResult(
     val success: Boolean,
     val error: String?
 )
-
