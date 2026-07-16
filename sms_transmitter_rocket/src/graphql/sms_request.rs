@@ -38,6 +38,8 @@ pub struct SmsRequest {
     pub phone_number: String,
     pub message: String,
     pub callback_url: Option<String>,
+    pub callback_response_code: Option<i32>,
+    pub callback_response_body: Option<String>,
     pub status: SmsStatus,
     pub assigned_device_id: Option<ID>,
     pub error: Option<String>,
@@ -54,6 +56,8 @@ impl From<sms_request::Model> for SmsRequest {
             phone_number: m.phone_number,
             message: m.message,
             callback_url: m.callback_url,
+            callback_response_code: m.callback_response_code,
+            callback_response_body: m.callback_response_body,
             error: m.error,
             created_at: m.created_at.to_string(),
             updated_at: m.updated_at.to_string(),
@@ -138,6 +142,8 @@ impl SmsRequestMutation {
             phone_number: Set(input.phone_number.clone()),
             message: Set(input.message.clone()),
             callback_url: Set(input.callback_url.clone()),
+            callback_response_code: Set(None),
+            callback_response_body: Set(None),
             status: Set(status),
             assigned_token_id: Set(assigned_token_id),
             error: Set(None),
@@ -229,12 +235,37 @@ impl SmsRequestMutation {
         txn.commit().await?;
 
         if let Some(callback_url) = callback_url {
-            if let Err(e) = invoke_callback_url(&callback_url).await {
-                tracing::error!(
-                    "Failed to call callback URL for request {:?}: {}",
-                    input.request_id,
-                    e
-                );
+            match invoke_callback_url(&callback_url).await {
+                Ok(response) => {
+                    if let Ok(Some(req)) = sms_request::Entity::find_by_id(request_id).one(db).await {
+                        let mut callback_active: sms_request::ActiveModel = req.into();
+                        callback_active.callback_response_code = Set(Some(response.status_code));
+                        callback_active.callback_response_body = Set(Some(response.body));
+                        callback_active.updated_at = Set(Local::now().naive_local());
+                        if let Err(e) = callback_active.update(db).await {
+                            tracing::error!(
+                                "Failed to save callback response for request {:?}: {}",
+                                input.request_id,
+                                e
+                            );
+                        }
+                    }
+
+                    if !response.is_success {
+                        tracing::error!(
+                            "Callback URL returned non-success status for request {:?}: {}",
+                            input.request_id,
+                            response.status_code
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to call callback URL for request {:?}: {}",
+                        input.request_id,
+                        e
+                    );
+                }
             }
         }
 
@@ -242,7 +273,13 @@ impl SmsRequestMutation {
     }
 }
 
-async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), String> {
+struct CallbackResponse {
+    status_code: i32,
+    body: String,
+    is_success: bool,
+}
+
+async fn invoke_callback_url(callback_url: &str) -> std::result::Result<CallbackResponse, String> {
     let parsed_url =
         reqwest::Url::parse(callback_url).map_err(|e| format!("Invalid callback URL: {e}"))?;
     let callback_host = validate_callback_url(&parsed_url)?;
@@ -251,15 +288,24 @@ async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), Stri
         CallbackHost::Domain(domain) => build_callback_client_with_resolved_host(&domain, &parsed_url).await?,
     };
 
-    client
+    let response = client
         .get(parsed_url)
         .timeout(Duration::from_secs(5))
         .send()
         .await
-        .map_err(|e| format!("Callback request failed: {e}"))?
-        .error_for_status()
         .map_err(|e| format!("Callback request failed: {e}"))?;
-    Ok(())
+    let status_code = response.status().as_u16() as i32;
+    let is_success = response.status().is_success();
+    let body = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read callback response body: {e}"))?;
+
+    Ok(CallbackResponse {
+        status_code,
+        body,
+        is_success,
+    })
 }
 
 fn callback_http_client() -> &'static Client {
