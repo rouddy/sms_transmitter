@@ -6,8 +6,9 @@ A Rust backend for relaying SMS messages via Android devices using Firebase Clou
 
 1. A client calls the `requestSms` GraphQL mutation with a phone number and message.
 2. The server selects an available Android device (by FCM token) that has remaining daily/monthly quota.
-3. The server sends an FCM data message to the device with keys `phoneNumber`, `message`, and optionally `callback`.
+3. The server sends an FCM data message to the device with keys `phoneNumber`, `message`, and `requestId`.
 4. The Android app receives the FCM message, sends the SMS, and calls `reportSmsResult` on this server's GraphQL endpoint to report success or failure.
+5. When `reportSmsResult` is received, the server calls `callbackUrl` (if provided in the original request).
 
 ## Setup
 

@@ -1,5 +1,6 @@
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
+use reqwest::Client;
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
 use uuid::Uuid;
 
@@ -147,19 +148,12 @@ impl SmsRequestMutation {
         let firebase = firebase.clone();
         let phone_number = input.phone_number.clone();
         let message = input.message.clone();
-        let callback_url = input.callback_url.clone();
         let fcm_token_str = token.token.clone();
         let db_clone = db.clone();
 
         tokio::spawn(async move {
             match firebase
-                .send_sms_request(
-                    &fcm_token_str,
-                    &request_id.to_string(),
-                    &phone_number,
-                    &message,
-                    callback_url.as_deref(),
-                )
+                .send_sms_request(&fcm_token_str, &request_id.to_string(), &phone_number, &message)
                 .await
             {
                 Ok(_) => {
@@ -217,6 +211,7 @@ impl SmsRequestMutation {
             token_active.update(&txn).await?;
         }
 
+        let callback_url = request.callback_url.clone();
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
             active.status = Set(STATUS_SENT.to_string());
@@ -230,8 +225,23 @@ impl SmsRequestMutation {
 
         txn.commit().await?;
 
+        if let Some(callback_url) = callback_url {
+            if let Err(e) = invoke_callback_url(&callback_url).await {
+                tracing::error!(
+                    "Failed to call callback URL for request {}: {}",
+                    input.request_id,
+                    e
+                );
+            }
+        }
+
         Ok(true)
     }
+}
+
+async fn invoke_callback_url(callback_url: &str) -> std::result::Result<(), reqwest::Error> {
+    Client::new().get(callback_url).send().await?.error_for_status()?;
+    Ok(())
 }
 
 #[derive(Default)]

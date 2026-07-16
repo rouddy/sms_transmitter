@@ -3,14 +3,12 @@ package com.rouddy.smstransmitter
 data class FcmPayload(
     val phoneNumber: String,
     val message: String,
-    val callback: String?,
     val requestId: String? = null,
 )
 
 object FcmPayloadParser {
     private const val KEY_PHONE_NUMBER = "phoneNumber"
     private const val KEY_MESSAGE = "message"
-    private const val KEY_CALLBACK = "callback"
     private const val KEY_REQUEST_ID = "requestId"
 
     fun parse(data: Map<String, String>): FcmPayload? {
@@ -20,8 +18,7 @@ object FcmPayloadParser {
         val message = data[KEY_MESSAGE]?.trim().orEmpty()
         if (message.isBlank()) return null
 
-        val callback = data[KEY_CALLBACK]?.trim()?.takeIf { it.isNotBlank() }
         val requestId = data[KEY_REQUEST_ID]?.trim()?.takeIf { it.isNotBlank() }
-        return FcmPayload(phoneNumber = phoneNumber, message = message, callback = callback, requestId = requestId)
+        return FcmPayload(phoneNumber = phoneNumber, message = message, requestId = requestId)
     }
 }
