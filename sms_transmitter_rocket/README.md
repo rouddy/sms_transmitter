@@ -119,6 +119,8 @@ Note: registering the same `token` again updates `deviceInfo`, `dailyLimit`, `mo
 - `phoneNumber`
 - `message`
 - `callbackUrl`
+- `callbackResponseCode`
+- `callbackResponseBody`
 - `status`
 - `assignedDeviceId`
 - `error`
@@ -152,6 +154,8 @@ mutation {
     phoneNumber
     message
     callbackUrl
+    callbackResponseCode
+    callbackResponseBody
     status
     assignedDeviceId
     error
@@ -184,6 +188,8 @@ query {
     phoneNumber
     message
     callbackUrl
+    callbackResponseCode
+    callbackResponseBody
     status
     assignedDeviceId
     error
