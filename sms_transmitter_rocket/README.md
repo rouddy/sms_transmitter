@@ -146,7 +146,7 @@ Create an SMS request:
 ```graphql
 mutation {
   requestSms(input: {
-    phoneNumber: "+1234567890"
+    phoneNumber: "01012345678"
     message: "Hello from the server!"
     callbackUrl: "https://example.com/callback"
   }) {
