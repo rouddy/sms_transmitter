@@ -228,7 +228,7 @@ impl SmsRequestMutation {
         if let Some(callback_url) = callback_url {
             if let Err(e) = invoke_callback_url(&callback_url).await {
                 tracing::error!(
-                    "Failed to call callback URL for request {}: {}",
+                    "Failed to call callback URL for request {:?}: {}",
                     input.request_id,
                     e
                 );
