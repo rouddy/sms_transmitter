@@ -124,7 +124,7 @@ class SettingsActivity : AppCompatActivity() {
             ?.let {
                 URL_PATTERN.find(it)?.let { matchResult ->
                     matchResult.groupValues[1]
-                }
+                } ?: ""
             }
         if (serverUrl?.isEmpty() == true) {
             smsLimitSettings.removeServerUrl()
