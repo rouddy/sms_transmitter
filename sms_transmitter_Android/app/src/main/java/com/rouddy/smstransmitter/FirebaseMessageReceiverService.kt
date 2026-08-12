@@ -17,13 +17,16 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        val config = SmsLimitSettings(applicationContext).getConfig()
+        val settings = SmsLimitSettings(applicationContext)
+        initializePhoneNumbersIfNeeded(settings)
+        val config = settings.getConfig()
         val serverUrl = config.serverUrl ?: return
 
         val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
         val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
             token = token,
             deviceInfo = deviceInfo,
+            phoneNumbers = config.phoneNumbers,
             dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
         )
@@ -150,6 +153,15 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onDestroy() {
         disposables.clear()
         super.onDestroy()
+    }
+
+    private fun initializePhoneNumbersIfNeeded(settings: SmsLimitSettings) {
+        if (settings.isPhoneNumbersInitialized()) return
+
+        val phoneNumbers = PhoneNumberResolver.getAvailablePhoneNumbers(applicationContext)
+        settings.savePhoneNumbers(phoneNumbers)
+        settings.resetLimitsToUnlimited()
+        settings.markPhoneNumbersInitialized()
     }
 
     private fun hasSmsPermission(): Boolean {

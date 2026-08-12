@@ -20,6 +20,7 @@ import io.reactivex.rxjava3.schedulers.Schedulers
 class SettingsActivity : AppCompatActivity() {
     private lateinit var dailyLimitInput: EditText
     private lateinit var monthlyLimitInput: EditText
+    private lateinit var phoneNumbersInput: EditText
     private lateinit var serverUrlInput: EditText
     private lateinit var saveButton: Button
     private lateinit var overlaySwitch: SwitchMaterial
@@ -50,6 +51,7 @@ class SettingsActivity : AppCompatActivity() {
         smsLimitSettings = SmsLimitSettings(this)
         dailyLimitInput = findViewById(R.id.input_daily_limit)
         monthlyLimitInput = findViewById(R.id.input_monthly_limit)
+        phoneNumbersInput = findViewById(R.id.input_phone_numbers)
         serverUrlInput = findViewById(R.id.input_server_url)
         saveButton = findViewById(R.id.button_save_limits)
         overlaySwitch = findViewById(R.id.switch_overlay_ui)
@@ -86,6 +88,7 @@ class SettingsActivity : AppCompatActivity() {
         val config = smsLimitSettings.getConfig()
         dailyLimitInput.setText(config.dailyLimit?.toString().orEmpty())
         monthlyLimitInput.setText(config.monthlyLimit?.toString().orEmpty())
+        phoneNumbersInput.setText(config.phoneNumbers.joinToString(separator = "\n"))
         serverUrlInput.setText(config.serverUrl.orEmpty())
         setOverlaySwitchChecked(config.overlayEnabled)
     }
@@ -119,6 +122,7 @@ class SettingsActivity : AppCompatActivity() {
             dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
             monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
         )
+        smsLimitSettings.savePhoneNumbers(parsePhoneNumbers(phoneNumbersInput.text?.toString()))
         val serverUrl = serverUrlInput.text
             ?.toString()?.trim()
             ?.let {
@@ -209,6 +213,7 @@ class SettingsActivity : AppCompatActivity() {
             GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
                 deviceInfo = deviceInfo,
+                phoneNumbers = config.phoneNumbers,
                 dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
                 monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
@@ -236,5 +241,14 @@ class SettingsActivity : AppCompatActivity() {
         private const val EMPTY_LIMIT = -1
         private const val INVALID_LIMIT = -2
         private val URL_PATTERN = "^(https?://[^/]*)/?$".toRegex()
+        private val PHONE_NUMBER_DELIMITER_REGEX = "[,\\n\\r]+".toRegex()
+    }
+
+    private fun parsePhoneNumbers(raw: String?): List<String> {
+        return raw.orEmpty()
+            .split(PHONE_NUMBER_DELIMITER_REGEX)
+            .map { it.trim().replace("-", "").replace(" ", "") }
+            .filter { it.isNotEmpty() }
+            .distinct()
     }
 }

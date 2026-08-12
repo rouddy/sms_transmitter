@@ -19,6 +19,7 @@ class GraphQlClient(private val serverUrl: String) {
     fun registerFcmToken(
         token: String,
         deviceInfo: String,
+        phoneNumbers: List<String>,
         dailyLimit: Int,
         monthlyLimit: Int,
     ): Single<Unit> {
@@ -34,6 +35,7 @@ class GraphQlClient(private val serverUrl: String) {
             "input" to mapOf(
                 "token" to token,
                 "deviceInfo" to deviceInfo,
+                "phoneNumbers" to phoneNumbers,
                 "dailyLimit" to dailyLimit,
                 "monthlyLimit" to monthlyLimit,
             )
@@ -90,4 +92,3 @@ class GraphQlClient(private val serverUrl: String) {
 }
 
 class GraphQlException(message: String) : Exception(message)
-

@@ -1,17 +1,20 @@
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
 use sea_orm::{
-    sea_query::OnConflict, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    sea_query::OnConflict, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
+    TransactionTrait,
 };
+use std::collections::HashSet;
 use uuid::Uuid;
 
-use crate::entity::fcm_token;
+use crate::entity::{fcm_token, phone_number};
 
 #[derive(SimpleObject)]
 pub struct FcmToken {
     pub id: ID,
     pub token: String,
     pub device_info: String,
+    pub phone_numbers: Vec<String>,
     pub daily_limit: i32,
     pub monthly_limit: i32,
     pub daily_sent_count: i32,
@@ -22,20 +25,21 @@ pub struct FcmToken {
     pub updated_at: String,
 }
 
-impl From<fcm_token::Model> for FcmToken {
-    fn from(m: fcm_token::Model) -> Self {
+impl FcmToken {
+    fn from_model(model: fcm_token::Model, phone_numbers: Vec<String>) -> Self {
         Self {
-            daily_remaining: (m.daily_limit - m.daily_sent_count).max(0),
-            monthly_remaining: (m.monthly_limit - m.monthly_sent_count).max(0),
-            id: ID(m.id.to_string()),
-            token: m.token,
-            device_info: m.device_info,
-            daily_limit: m.daily_limit,
-            monthly_limit: m.monthly_limit,
-            daily_sent_count: m.daily_sent_count,
-            monthly_sent_count: m.monthly_sent_count,
-            created_at: m.created_at.to_string(),
-            updated_at: m.updated_at.to_string(),
+            daily_remaining: (model.daily_limit - model.daily_sent_count).max(0),
+            monthly_remaining: (model.monthly_limit - model.monthly_sent_count).max(0),
+            id: ID(model.id.to_string()),
+            token: model.token,
+            device_info: model.device_info,
+            phone_numbers,
+            daily_limit: model.daily_limit,
+            monthly_limit: model.monthly_limit,
+            daily_sent_count: model.daily_sent_count,
+            monthly_sent_count: model.monthly_sent_count,
+            created_at: model.created_at.to_string(),
+            updated_at: model.updated_at.to_string(),
         }
     }
 }
@@ -44,6 +48,7 @@ impl From<fcm_token::Model> for FcmToken {
 pub struct RegisterFcmTokenInput {
     pub token: String,
     pub device_info: String,
+    pub phone_numbers: Vec<String>,
     pub daily_limit: i32,
     pub monthly_limit: i32,
 }
@@ -61,8 +66,11 @@ impl FcmTokenMutation {
         let db = ctx.data::<DatabaseConnection>()?;
         let now = Local::now().naive_local();
         let today = now.date();
+        let phone_numbers = normalize_phone_numbers(input.phone_numbers);
 
         let token = input.token.clone();
+        let txn = db.begin().await?;
+
         let active = fcm_token::ActiveModel {
             id: Set(Uuid::new_v4()),
             token: Set(input.token),
@@ -88,16 +96,33 @@ impl FcmTokenMutation {
                     ])
                     .to_owned(),
             )
-            .exec(db)
+            .exec(&txn)
             .await?;
 
         let model = fcm_token::Entity::find()
             .filter(fcm_token::Column::Token.eq(token))
-            .one(db)
+            .one(&txn)
             .await?
             .ok_or_else(|| async_graphql::Error::new("failed to load registered fcm token"))?;
 
-        Ok(FcmToken::from(model))
+        phone_number::Entity::delete_many()
+            .filter(phone_number::Column::FcmTokenId.eq(model.id))
+            .exec(&txn)
+            .await?;
+
+        if !phone_numbers.is_empty() {
+            phone_number::Entity::insert_many(phone_numbers.iter().map(|value| phone_number::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                fcm_token_id: Set(model.id),
+                phone_number: Set(value.clone()),
+            }))
+            .exec(&txn)
+            .await?;
+        }
+
+        txn.commit().await?;
+
+        Ok(FcmToken::from_model(model, phone_numbers))
     }
 
     pub async fn delete_fcm_token(&self, ctx: &Context<'_>, token_id: ID) -> Result<bool> {
@@ -117,6 +142,33 @@ impl FcmTokenQuery {
     pub async fn fcm_tokens(&self, ctx: &Context<'_>) -> Result<Vec<FcmToken>> {
         let db = ctx.data::<DatabaseConnection>()?;
         let tokens = fcm_token::Entity::find().all(db).await?;
-        Ok(tokens.into_iter().map(FcmToken::from).collect())
+
+        let mut result = Vec::with_capacity(tokens.len());
+        for token in tokens {
+            let phone_numbers = load_phone_numbers(db, token.id).await?;
+            result.push(FcmToken::from_model(token, phone_numbers));
+        }
+
+        Ok(result)
     }
+}
+
+async fn load_phone_numbers(db: &DatabaseConnection, token_id: Uuid) -> Result<Vec<String>> {
+    let rows = phone_number::Entity::find()
+        .filter(phone_number::Column::FcmTokenId.eq(token_id))
+        .order_by_asc(phone_number::Column::PhoneNumber)
+        .all(db)
+        .await?;
+
+    Ok(rows.into_iter().map(|row| row.phone_number).collect())
+}
+
+fn normalize_phone_numbers(phone_numbers: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    phone_numbers
+        .into_iter()
+        .map(|phone_number| phone_number.trim().to_string())
+        .filter(|phone_number| !phone_number.is_empty())
+        .filter(|phone_number| seen.insert(phone_number.clone()))
+        .collect()
 }

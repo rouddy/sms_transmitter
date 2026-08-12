@@ -36,9 +36,15 @@ class MainActivity : AppCompatActivity() {
     private val historyDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (!granted) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val smsGranted = result[Manifest.permission.SEND_SMS] ?: hasPermission(Manifest.permission.SEND_SMS)
+            if (!smsGranted) {
                 Toast.makeText(this, R.string.sms_permission_required, Toast.LENGTH_LONG).show()
+            }
+            if (result[Manifest.permission.READ_PHONE_STATE] == false ||
+                result[Manifest.permission.READ_PHONE_NUMBERS] == false
+            ) {
+                Toast.makeText(this, R.string.phone_number_permission_required, Toast.LENGTH_LONG).show()
             }
         }
 
@@ -88,16 +94,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureSmsPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) !=
-            PackageManager.PERMISSION_GRANTED
+        val permissionsToRequest = mutableListOf<String>()
+        if (!hasPermission(Manifest.permission.SEND_SMS)) {
+            permissionsToRequest.add(Manifest.permission.SEND_SMS)
+        }
+        if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) {
+            permissionsToRequest.add(Manifest.permission.READ_PHONE_STATE)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
         ) {
-            permissionLauncher.launch(Manifest.permission.SEND_SMS)
+            permissionsToRequest.add(Manifest.permission.READ_PHONE_NUMBERS)
+        }
+        if (permissionsToRequest.isNotEmpty()) {
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
     private fun registerFcmTokenWithServer() {
-        val config = smsLimitSettings.getConfig()
-        val serverUrl = config.serverUrl ?: return
+        initializePhoneNumbersIfNeeded()
+        val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
 
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (!task.isSuccessful) {
@@ -106,9 +122,11 @@ class MainActivity : AppCompatActivity() {
             }
             val token = task.result ?: return@addOnCompleteListener
             val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+            val config = smsLimitSettings.getConfig()
             val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
                 deviceInfo = deviceInfo,
+                phoneNumbers = config.phoneNumbers,
                 dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
                 monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
@@ -218,6 +236,19 @@ class MainActivity : AppCompatActivity() {
             UsageOverlayService.start(this)
         } else {
             UsageOverlayService.stop(this)
+        }
+
+        private fun initializePhoneNumbersIfNeeded() {
+            if (smsLimitSettings.isPhoneNumbersInitialized()) return
+
+            val phoneNumbers = PhoneNumberResolver.getAvailablePhoneNumbers(this)
+            smsLimitSettings.savePhoneNumbers(phoneNumbers)
+            smsLimitSettings.resetLimitsToUnlimited()
+            smsLimitSettings.markPhoneNumbersInitialized()
+        }
+
+        private fun hasPermission(permission: String): Boolean {
+            return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
         }
     }
 

@@ -31,4 +31,7 @@
     <string name="overlay_daily_label">일</string>
     <string name="overlay_monthly_label">월</string>
     <string name="server_connection_failed">서버와의 연결에 실패했습니다.</string>
+    <string name="phone_numbers_label">발신 가능 전화번호 (줄바꿈/쉼표 구분)</string>
+    <string name="phone_numbers_hint">예: 01012345678</string>
+    <string name="phone_number_permission_required">전화번호를 자동으로 읽으려면 전화 권한이 필요합니다.</string>
 </resources>
