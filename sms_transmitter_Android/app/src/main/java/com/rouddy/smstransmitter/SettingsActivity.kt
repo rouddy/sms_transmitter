@@ -247,8 +247,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun parsePhoneNumbers(raw: String?): List<String> {
         return raw.orEmpty()
             .split(PHONE_NUMBER_DELIMITER_REGEX)
-            .map { it.trim().replace("-", "").replace(" ", "") }
-            .filter { it.isNotEmpty() }
+            .mapNotNull { PhoneNumberResolver.normalizePhoneNumber(it) }
             .distinct()
     }
 }

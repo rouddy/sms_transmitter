@@ -41,10 +41,18 @@ class MainActivity : AppCompatActivity() {
             if (!smsGranted) {
                 Toast.makeText(this, R.string.sms_permission_required, Toast.LENGTH_LONG).show()
             }
-            if (result[Manifest.permission.READ_PHONE_STATE] == false ||
-                result[Manifest.permission.READ_PHONE_NUMBERS] == false
-            ) {
+            val readPhoneStateGranted =
+                result[Manifest.permission.READ_PHONE_STATE] ?: hasPermission(Manifest.permission.READ_PHONE_STATE)
+            val readPhoneNumbersGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                result[Manifest.permission.READ_PHONE_NUMBERS] ?: hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
+            } else {
+                true
+            }
+            if (!readPhoneStateGranted || !readPhoneNumbersGranted) {
                 Toast.makeText(this, R.string.phone_number_permission_required, Toast.LENGTH_LONG).show()
+            } else {
+                smsLimitSettings.initializePhoneNumbersIfNeeded(this)
+                registerFcmTokenWithServer()
             }
         }
 
@@ -112,7 +120,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun registerFcmTokenWithServer() {
-        initializePhoneNumbersIfNeeded()
+        smsLimitSettings.initializePhoneNumbersIfNeeded(this)
         val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
 
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
@@ -237,19 +245,10 @@ class MainActivity : AppCompatActivity() {
         } else {
             UsageOverlayService.stop(this)
         }
+    }
 
-        private fun initializePhoneNumbersIfNeeded() {
-            if (smsLimitSettings.isPhoneNumbersInitialized()) return
-
-            val phoneNumbers = PhoneNumberResolver.getAvailablePhoneNumbers(this)
-            smsLimitSettings.savePhoneNumbers(phoneNumbers)
-            smsLimitSettings.resetLimitsToUnlimited()
-            smsLimitSettings.markPhoneNumbersInitialized()
-        }
-
-        private fun hasPermission(permission: String): Boolean {
-            return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
-        }
+    private fun hasPermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
     companion object {

@@ -34,6 +34,7 @@ Navigate to `http://localhost:8000/graphiql` for the interactive explorer.
 - `id`
 - `token`
 - `deviceInfo`
+- `phoneNumbers`
 - `dailyLimit`
 - `monthlyLimit`
 - `dailySentCount`
@@ -57,12 +58,14 @@ mutation {
   registerFcmToken(input: {
     token: "<FCM_TOKEN>"
     deviceInfo: "Pixel 7"
+    phoneNumbers: ["01012345678", "01099998888"]
     dailyLimit: 100
     monthlyLimit: 2000
   }) {
     id
     token
     deviceInfo
+    phoneNumbers
     dailyLimit
     monthlyLimit
     dailySentCount
@@ -83,6 +86,7 @@ query {
     id
     token
     deviceInfo
+    phoneNumbers
     dailyLimit
     monthlyLimit
     dailySentCount
@@ -103,7 +107,7 @@ mutation {
 }
 ```
 
-Note: registering the same `token` again updates `deviceInfo`, `dailyLimit`, `monthlyLimit`, and `updatedAt`. Existing sent counts are preserved.
+Note: registering the same `token` again updates `deviceInfo`, `phoneNumbers`, `dailyLimit`, `monthlyLimit`, and `updatedAt`. Existing sent counts are preserved.
 
 ### SMS Request
 

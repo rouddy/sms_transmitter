@@ -1,10 +1,10 @@
 use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
 use sea_orm::{
-    sea_query::OnConflict, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, Set,
-    TransactionTrait,
+    sea_query::OnConflict, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder,
+    Set, TransactionTrait,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::entity::{fcm_token, phone_number};
@@ -111,10 +111,12 @@ impl FcmTokenMutation {
             .await?;
 
         if !phone_numbers.is_empty() {
-            phone_number::Entity::insert_many(phone_numbers.iter().map(|value| phone_number::ActiveModel {
-                id: Set(Uuid::new_v4()),
-                fcm_token_id: Set(model.id),
-                phone_number: Set(value.clone()),
+            phone_number::Entity::insert_many(phone_numbers.iter().map(|value| {
+                phone_number::ActiveModel {
+                    id: Set(Uuid::new_v4()),
+                    fcm_token_id: Set(model.id),
+                    phone_number: Set(value.clone()),
+                }
             }))
             .exec(&txn)
             .await?;
@@ -142,10 +144,15 @@ impl FcmTokenQuery {
     pub async fn fcm_tokens(&self, ctx: &Context<'_>) -> Result<Vec<FcmToken>> {
         let db = ctx.data::<DatabaseConnection>()?;
         let tokens = fcm_token::Entity::find().all(db).await?;
+        let token_ids: Vec<Uuid> = tokens.iter().map(|token| token.id).collect();
+        let phone_numbers_by_token = load_phone_numbers_by_token_ids(db, &token_ids).await?;
 
         let mut result = Vec::with_capacity(tokens.len());
         for token in tokens {
-            let phone_numbers = load_phone_numbers(db, token.id).await?;
+            let phone_numbers = phone_numbers_by_token
+                .get(&token.id)
+                .cloned()
+                .unwrap_or_default();
             result.push(FcmToken::from_model(token, phone_numbers));
         }
 
@@ -153,14 +160,28 @@ impl FcmTokenQuery {
     }
 }
 
-async fn load_phone_numbers(db: &DatabaseConnection, token_id: Uuid) -> Result<Vec<String>> {
+async fn load_phone_numbers_by_token_ids(
+    db: &DatabaseConnection,
+    token_ids: &[Uuid],
+) -> Result<HashMap<Uuid, Vec<String>>> {
+    if token_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+
     let rows = phone_number::Entity::find()
-        .filter(phone_number::Column::FcmTokenId.eq(token_id))
+        .filter(phone_number::Column::FcmTokenId.is_in(token_ids.iter().copied()))
         .order_by_asc(phone_number::Column::PhoneNumber)
         .all(db)
         .await?;
 
-    Ok(rows.into_iter().map(|row| row.phone_number).collect())
+    let mut grouped = HashMap::<Uuid, Vec<String>>::new();
+    for row in rows {
+        grouped
+            .entry(row.fcm_token_id)
+            .or_default()
+            .push(row.phone_number);
+    }
+    Ok(grouped)
 }
 
 fn normalize_phone_numbers(phone_numbers: Vec<String>) -> Vec<String> {

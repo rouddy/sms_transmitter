@@ -15,6 +15,17 @@ data class SmsLimitConfig(
 class SmsLimitSettings(context: Context) {
     private val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
+    fun initializePhoneNumbersIfNeeded(context: Context): Boolean {
+        if (isPhoneNumbersInitialized()) return true
+        if (!PhoneNumberResolver.hasPhoneNumberPermission(context)) return false
+
+        val phoneNumbers = PhoneNumberResolver.getAvailablePhoneNumbers(context)
+        savePhoneNumbers(phoneNumbers)
+        resetLimitsToUnlimited()
+        markPhoneNumbersInitialized()
+        return true
+    }
+
     fun getConfig(): SmsLimitConfig {
         return SmsLimitConfig(
             dailyLimit = readLimit(KEY_DAILY_LIMIT),

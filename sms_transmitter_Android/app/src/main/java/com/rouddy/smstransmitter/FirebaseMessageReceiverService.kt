@@ -18,7 +18,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         val settings = SmsLimitSettings(applicationContext)
-        initializePhoneNumbersIfNeeded(settings)
+        settings.initializePhoneNumbersIfNeeded(applicationContext)
         val config = settings.getConfig()
         val serverUrl = config.serverUrl ?: return
 
@@ -153,15 +153,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onDestroy() {
         disposables.clear()
         super.onDestroy()
-    }
-
-    private fun initializePhoneNumbersIfNeeded(settings: SmsLimitSettings) {
-        if (settings.isPhoneNumbersInitialized()) return
-
-        val phoneNumbers = PhoneNumberResolver.getAvailablePhoneNumbers(applicationContext)
-        settings.savePhoneNumbers(phoneNumbers)
-        settings.resetLimitsToUnlimited()
-        settings.markPhoneNumbersInitialized()
     }
 
     private fun hasSmsPermission(): Boolean {

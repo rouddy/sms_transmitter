@@ -23,7 +23,11 @@ impl MigrationTrait for Migration {
                             .primary_key(),
                     )
                     .col(ColumnDef::new(PhoneNumbers::FcmTokenId).uuid().not_null())
-                    .col(ColumnDef::new(PhoneNumbers::PhoneNumber).string().not_null())
+                    .col(
+                        ColumnDef::new(PhoneNumbers::PhoneNumber)
+                            .string()
+                            .not_null(),
+                    )
                     .foreign_key(
                         ForeignKey::create()
                             .name("fk_phone_numbers_fcm_token_id")
