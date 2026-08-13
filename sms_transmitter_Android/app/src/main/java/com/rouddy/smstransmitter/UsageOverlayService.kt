@@ -3,9 +3,7 @@ package com.rouddy.smstransmitter
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -17,7 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
-import kotlin.math.min
+import android.widget.TextView
 
 class UsageOverlayService : Service() {
     private lateinit var windowManager: WindowManager
@@ -70,68 +68,94 @@ class UsageOverlayService : Service() {
 
     private fun refreshOverlay() {
         val config = smsLimitSettings.getConfig()
-        val dailyLimit = config.dailyLimit
-        val monthlyLimit = config.monthlyLimit
-        if (!config.overlayEnabled || (dailyLimit == null && monthlyLimit == null)) {
+        val limitedPhoneNumbers = config.phoneNumbers.filter { it.dailyLimit != null || it.monthlyLimit != null }
+        if (!config.overlayEnabled || limitedPhoneNumbers.isEmpty()) {
             removeOverlay()
             stopSelf()
             return
         }
 
         val now = System.currentTimeMillis()
-        val todaySentCount = smsHistoryDatabase.countSuccessfulSmsBetween(
-            SmsLimitSettings.getStartOfTodayMillis(now),
-            SmsLimitSettings.getStartOfNextDayMillis(now)
-        )
-        val monthSentCount = smsHistoryDatabase.countSuccessfulSmsBetween(
-            SmsLimitSettings.getStartOfMonthMillis(now),
-            SmsLimitSettings.getStartOfNextMonthMillis(now)
-        )
-
         val container = ensureOverlayContainer()
         container.removeAllViews()
 
-        var hasPreviousView = false
-        dailyLimit?.let { configuredDailyLimit ->
+        limitedPhoneNumbers.forEachIndexed { index, phoneConfig ->
+            if (index > 0) {
+                addDivider(container)
+            }
             container.addView(
-                RadialUsageView(this).apply {
-                    setUsage(
-                        label = getString(R.string.overlay_daily_label),
-                        limit = configuredDailyLimit,
-                        sent = todaySentCount
-                    )
-                }
-            )
-            hasPreviousView = true
-        }
-        monthlyLimit?.let { configuredMonthlyLimit ->
-            container.addView(
-                RadialUsageView(this).apply {
-                    setUsage(
-                        label = getString(R.string.overlay_monthly_label),
-                        limit = configuredMonthlyLimit,
-                        sent = monthSentCount
-                    )
-                },
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply {
-                    if (hasPreviousView) marginStart = dp(16f)
+                TextView(this).apply {
+                    setTextColor(Color.WHITE)
+                    text = buildString {
+                        append(phoneConfig.phoneNumber)
+                        append('\n')
+                        append(
+                            formatUsageLine(
+                                periodLabel = getString(R.string.period_daily),
+                                limit = phoneConfig.dailyLimit,
+                                sentCount = smsHistoryDatabase.countSuccessfulSmsBetweenForSender(
+                                    phoneConfig.phoneNumber,
+                                    SmsLimitSettings.getStartOfTodayMillis(now),
+                                    SmsLimitSettings.getStartOfNextDayMillis(now)
+                                )
+                            )
+                        )
+                        append('\n')
+                        append(
+                            formatUsageLine(
+                                periodLabel = getString(R.string.period_monthly),
+                                limit = phoneConfig.monthlyLimit,
+                                sentCount = smsHistoryDatabase.countSuccessfulSmsBetweenForSender(
+                                    phoneConfig.phoneNumber,
+                                    SmsLimitSettings.getStartOfMonthMillis(now),
+                                    SmsLimitSettings.getStartOfNextMonthMillis(now)
+                                )
+                            )
+                        )
+                    }
                 }
             )
         }
     }
 
+    private fun formatUsageLine(periodLabel: String, limit: Int?, sentCount: Int): String {
+        return if (limit != null && limit > 0) {
+            getString(
+                R.string.sms_usage_with_limit,
+                periodLabel,
+                sentCount,
+                limit,
+                (limit - sentCount).coerceAtLeast(0)
+            )
+        } else {
+            getString(R.string.sms_usage_unlimited, periodLabel, sentCount)
+        }
+    }
+
     private fun createOverlayContainer(): LinearLayout {
         val container = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
-            setBackgroundColor(Color.argb(130, 20, 20, 20))
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
+            setBackgroundColor(Color.argb(160, 20, 20, 20))
             setOnTouchListener(DragTouchListener())
         }
         overlayContainer = container
         return container
+    }
+
+    private fun addDivider(container: LinearLayout) {
+        container.addView(
+            View(this).apply {
+                setBackgroundColor(Color.argb(120, 255, 255, 255))
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    dp(1f)
+                ).apply {
+                    topMargin = dp(8f)
+                    bottomMargin = dp(8f)
+                }
+            }
+        )
     }
 
     private fun ensureOverlayContainer(): LinearLayout {
@@ -228,78 +252,4 @@ class UsageOverlayService : Service() {
             })
         }
     }
-}
-
-private class RadialUsageView(context: Context) : View(context) {
-    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = dp(8f).toFloat()
-        color = Color.argb(130, 255, 255, 255)
-    }
-    private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = dp(8f).toFloat()
-        strokeCap = Paint.Cap.ROUND
-        color = Color.parseColor("#4CAF50")
-    }
-    private val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(22f).toFloat()
-        isFakeBoldText = true
-    }
-    private val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE
-        textAlign = Paint.Align.CENTER
-        textSize = dp(12f).toFloat()
-    }
-
-    private var label = ""
-    private var remaining = 0
-    private var progress = 0f
-    private val sizePx = dp(100f)
-
-    init {
-        layoutParams = LinearLayout.LayoutParams(sizePx, sizePx)
-    }
-
-    fun setUsage(label: String, limit: Int, sent: Int) {
-        this.label = label
-        if (limit <= 0) {
-            remaining = 0
-            progress = 0f
-            invalidate()
-            return
-        }
-        remaining = (limit - sent).coerceAtLeast(0)
-        progress = (sent.coerceAtMost(limit).toFloat() / limit.toFloat()).coerceIn(0f, 1f)
-        invalidate()
-    }
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(sizePx, sizePx)
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val cx = width / 2f
-        val cy = height / 2f
-        val radius = min(width, height) / 2f - trackPaint.strokeWidth
-
-        canvas.drawCircle(cx, cy, radius, trackPaint)
-        canvas.drawArc(
-            cx - radius,
-            cy - radius,
-            cx + radius,
-            cy + radius,
-            -90f,
-            progress * 360f,
-            false,
-            progressPaint
-        )
-        canvas.drawText(remaining.toString(), cx, cy + dp(8f), valuePaint)
-        canvas.drawText(label, cx, cy - dp(12f), labelPaint)
-    }
-
-    private fun dp(value: Float): Int = (value * resources.displayMetrics.density).toInt()
 }

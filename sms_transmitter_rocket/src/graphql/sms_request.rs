@@ -1,13 +1,13 @@
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
 use reqwest::Client;
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set, TransactionTrait};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, TransactionTrait};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::entity::{fcm_token, sms_request};
+use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
 
 pub const STATUS_SENDING: &str = "Sending";
@@ -43,6 +43,7 @@ pub struct SmsRequest {
     pub callback_response_body: Option<String>,
     pub status: SmsStatus,
     pub assigned_device_id: Option<ID>,
+    pub assigned_phone_number_id: Option<ID>,
     pub error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -53,6 +54,7 @@ impl From<sms_request::Model> for SmsRequest {
         Self {
             status: SmsStatus::from_str(&m.status),
             assigned_device_id: m.assigned_token_id.map(|id| ID(id.to_string())),
+            assigned_phone_number_id: m.assigned_phone_number_id.map(|id| ID(id.to_string())),
             id: ID(m.id.to_string()),
             phone_number: m.phone_number,
             message: m.message,
@@ -78,8 +80,6 @@ pub struct ReportSmsResultInput {
     pub request_id: ID,
     pub success: bool,
     pub error: Option<String>,
-    pub daily_sent_count: i32,
-    pub monthly_sent_count: i32,
 }
 
 #[derive(Default)]
@@ -106,27 +106,29 @@ impl SmsRequestMutation {
             .all(&txn)
             .await
             .expect("Find Tokens Error");
-
-        let selected = tokens
+        let token_by_id = tokens
             .iter()
-            .filter(|token| token.daily_remaining_ratio() > 0.0)
-            .max_by(|a, b| {
-                a.daily_remaining_ratio()
-                    .partial_cmp(&b.daily_remaining_ratio())
+            .map(|token| (token.id, token.clone()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let phone_numbers = phone_number::Entity::find()
+            .all(&txn)
+            .await
+            .expect("Find Phone Numbers Error");
+
+        let selected = phone_numbers
+            .iter()
+            .filter(|phone_number| phone_number.can_send_now())
+            .filter_map(|phone_number| {
+                token_by_id
+                    .get(&phone_number.fcm_token_id)
+                    .cloned()
+                    .map(|token| (phone_number.clone(), token))
+            })
+            .max_by(|(a, _), (b, _)| {
+                a.availability_score()
+                    .partial_cmp(&b.availability_score())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .cloned()
-            .or_else(|| {
-                tokens
-                    .iter()
-                    .filter(|token| token.monthly_remaining_ratio() > 0.0)
-                    .max_by(|a, b| {
-                        a.monthly_remaining_ratio()
-                            .partial_cmp(&b.monthly_remaining_ratio())
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .cloned()
-            });
 
         if selected.is_none() {
             return Err("남은 sms 쿼터가 없습니다.".to_string());
@@ -135,8 +137,9 @@ impl SmsRequestMutation {
         let request_id = Uuid::new_v4();
 
         let status = STATUS_SENDING.to_string();
-        let token = selected.clone().unwrap();
-        let assigned_token_id = selected.map(|m| m.id);
+        let (selected_phone_number, token) = selected.unwrap();
+        let assigned_token_id = Some(token.id);
+        let assigned_phone_number_id = Some(selected_phone_number.id);
 
         let sms_active = sms_request::ActiveModel {
             id: Set(request_id),
@@ -147,6 +150,7 @@ impl SmsRequestMutation {
             callback_response_body: Set(None),
             status: Set(status),
             assigned_token_id: Set(assigned_token_id),
+            assigned_phone_number_id: Set(assigned_phone_number_id),
             error: Set(None),
             created_at: Set(now),
             updated_at: Set(now),
@@ -158,6 +162,7 @@ impl SmsRequestMutation {
         let firebase = firebase.clone();
         let phone_number = input.phone_number.clone();
         let message = input.message.clone();
+        let sender_phone_number = selected_phone_number.phone_number.clone();
         let fcm_token_str = token.token.clone();
         let db_clone = db.clone();
 
@@ -167,6 +172,7 @@ impl SmsRequestMutation {
                     &fcm_token_str,
                     &request_id.to_string(),
                     &phone_number,
+                    &sender_phone_number,
                     &message,
                 )
                 .await
@@ -200,7 +206,6 @@ impl SmsRequestMutation {
     ) -> Result<bool> {
         let db = ctx.data::<DatabaseConnection>()?;
         let now = Local::now().naive_local();
-        let reset_at = now.date();
         let txn = db.begin().await?;
 
         let request_id = Uuid::parse_str(&input.request_id)
@@ -211,19 +216,31 @@ impl SmsRequestMutation {
             .await?
             .ok_or_else(|| async_graphql::Error::new("SMS request not found"))?;
 
-        if let Some(token_id) = request.assigned_token_id {
-            let token = fcm_token::Entity::find_by_id(token_id)
-                .one(&txn)
-                .await?
-                .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
-
-            let mut token_active: fcm_token::ActiveModel = token.into();
-            token_active.daily_sent_count = Set(input.daily_sent_count);
-            token_active.monthly_sent_count = Set(input.monthly_sent_count);
-            token_active.last_daily_reset = Set(reset_at);
-            token_active.last_monthly_reset = Set(reset_at);
-            token_active.updated_at = Set(now);
-            token_active.update(&txn).await?;
+        if input.success {
+            if let Some(phone_number_id) = request.assigned_phone_number_id {
+                let mut phone_number_model = phone_number::Entity::find_by_id(phone_number_id)
+                    .one(&txn)
+                    .await?
+                    .ok_or_else(|| async_graphql::Error::new("assigned phone number not found"))?;
+                let today = now.date();
+                phone_number_model.increment_sent_counts(today);
+                let mut phone_number_active: phone_number::ActiveModel = phone_number_model.into();
+                phone_number_active.update(&txn).await?;
+            } else if let Some(token_id) = request.assigned_token_id {
+                let token = fcm_token::Entity::find_by_id(token_id)
+                    .one(&txn)
+                    .await?
+                    .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
+                let fallback_phone_number = phone_number::Entity::find()
+                    .filter(phone_number::Column::FcmTokenId.eq(token.id))
+                    .one(&txn)
+                    .await?;
+                if let Some(mut phone_number_model) = fallback_phone_number {
+                    phone_number_model.increment_sent_counts(now.date());
+                    let mut phone_number_active: phone_number::ActiveModel = phone_number_model.into();
+                    phone_number_active.update(&txn).await?;
+                }
+            }
         }
 
         let callback_url = request.callback_url.clone();

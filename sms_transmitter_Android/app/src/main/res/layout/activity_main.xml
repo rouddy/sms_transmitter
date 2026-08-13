@@ -13,36 +13,11 @@
         android:textStyle="bold" />
 
     <TextView
-        android:id="@+id/daily_usage_content"
+        android:id="@+id/usage_summary_content"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="8dp"
-        android:text="@string/default_daily_usage" />
-
-    <ProgressBar
-        android:id="@+id/progress_daily_usage"
-        style="@android:style/Widget.DeviceDefault.Light.ProgressBar.Horizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:max="100"
-        android:progress="0" />
-
-    <TextView
-        android:id="@+id/monthly_usage_content"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="@string/default_monthly_usage" />
-
-    <ProgressBar
-        android:id="@+id/progress_monthly_usage"
-        style="@android:style/Widget.DeviceDefault.Light.ProgressBar.Horizontal"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
-        android:max="100"
-        android:progress="0" />
+        android:text="@string/default_usage_summary" />
 
     <ScrollView
         android:layout_width="match_parent"

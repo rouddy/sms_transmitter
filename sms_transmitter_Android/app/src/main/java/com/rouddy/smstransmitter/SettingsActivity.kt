@@ -5,9 +5,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.Log
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -18,13 +23,13 @@ import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
 
 class SettingsActivity : AppCompatActivity() {
-    private lateinit var dailyLimitInput: EditText
-    private lateinit var monthlyLimitInput: EditText
     private lateinit var phoneNumbersInput: EditText
+    private lateinit var phoneNumberLimitsContainer: LinearLayout
     private lateinit var serverUrlInput: EditText
     private lateinit var saveButton: Button
     private lateinit var overlaySwitch: SwitchMaterial
     private lateinit var smsLimitSettings: SmsLimitSettings
+    private val phoneNumberLimitInputs = linkedMapOf<String, PhoneNumberLimitInputViews>()
     private var bindingOverlaySwitch = false
     private var pendingOverlayEnable = false
     private val disposables = CompositeDisposable()
@@ -49,21 +54,26 @@ class SettingsActivity : AppCompatActivity() {
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
 
         smsLimitSettings = SmsLimitSettings(this)
-        dailyLimitInput = findViewById(R.id.input_daily_limit)
-        monthlyLimitInput = findViewById(R.id.input_monthly_limit)
         phoneNumbersInput = findViewById(R.id.input_phone_numbers)
+        phoneNumberLimitsContainer = findViewById(R.id.phone_number_limits_container)
         serverUrlInput = findViewById(R.id.input_server_url)
         saveButton = findViewById(R.id.button_save_limits)
         overlaySwitch = findViewById(R.id.switch_overlay_ui)
 
         bindCurrentValues()
+        phoneNumbersInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                syncPhoneNumberLimitInputs(parsePhoneNumbers(s?.toString()))
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
         saveButton.setOnClickListener { saveValues() }
         overlaySwitch.setOnCheckedChangeListener { _, isChecked ->
             if (bindingOverlaySwitch) return@setOnCheckedChangeListener
+            val phoneNumberConfigs = collectPhoneNumberConfigs(showValidationError = false)
             if (isChecked) {
-                val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
-                val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
-                when (evaluateOverlayEnablement(dailyLimit, monthlyLimit)) {
+                when (evaluateOverlayEnablement(phoneNumberConfigs)) {
                     OverlayEnablementStatus.LIMITS_MISSING -> {
                         Toast.makeText(this, R.string.overlay_requires_limits, Toast.LENGTH_LONG).show()
                         setOverlaySwitchChecked(false)
@@ -86,23 +96,17 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun bindCurrentValues() {
         val config = smsLimitSettings.getConfig()
-        dailyLimitInput.setText(config.dailyLimit?.toString().orEmpty())
-        monthlyLimitInput.setText(config.monthlyLimit?.toString().orEmpty())
-        phoneNumbersInput.setText(config.phoneNumbers.joinToString(separator = "\n"))
+        phoneNumbersInput.setText(config.phoneNumbers.joinToString(separator = "\n") { it.phoneNumber })
+        syncPhoneNumberLimitInputs(config.phoneNumbers.map { it.phoneNumber }, config.phoneNumbers.associateBy { it.phoneNumber })
         serverUrlInput.setText(config.serverUrl.orEmpty())
         setOverlaySwitchChecked(config.overlayEnabled)
     }
 
     private fun saveValues() {
-        val dailyLimit = parseLimitInput(dailyLimitInput.text?.toString())
-        val monthlyLimit = parseLimitInput(monthlyLimitInput.text?.toString())
-        if (dailyLimit == INVALID_LIMIT || monthlyLimit == INVALID_LIMIT) {
-            Toast.makeText(this, R.string.invalid_limit_input, Toast.LENGTH_LONG).show()
-            return
-        }
+        val phoneNumberConfigs = collectPhoneNumberConfigs(showValidationError = true) ?: return
 
         val requestedOverlayEnabled = overlaySwitch.isChecked
-        val enablementStatus = evaluateOverlayEnablement(dailyLimit, monthlyLimit)
+        val enablementStatus = evaluateOverlayEnablement(phoneNumberConfigs)
         val shouldEnableOverlay = requestedOverlayEnabled && enablementStatus == OverlayEnablementStatus.ENABLED
         if (requestedOverlayEnabled) {
             when (enablementStatus) {
@@ -118,11 +122,7 @@ class SettingsActivity : AppCompatActivity() {
             }
         }
 
-        smsLimitSettings.saveConfig(
-            dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
-            monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT }
-        )
-        smsLimitSettings.savePhoneNumbers(parsePhoneNumbers(phoneNumbersInput.text?.toString()))
+        smsLimitSettings.savePhoneNumberConfigs(phoneNumberConfigs)
         val serverUrl = serverUrlInput.text
             ?.toString()?.trim()
             ?.let {
@@ -140,6 +140,28 @@ class SettingsActivity : AppCompatActivity() {
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
+    }
+
+    private fun collectPhoneNumberConfigs(showValidationError: Boolean): List<PhoneNumberLimitConfig>? {
+        val phoneNumbers = parsePhoneNumbers(phoneNumbersInput.text?.toString())
+        val configs = mutableListOf<PhoneNumberLimitConfig>()
+        for (phoneNumber in phoneNumbers) {
+            val inputs = phoneNumberLimitInputs[phoneNumber] ?: continue
+            val dailyLimit = parseLimitInput(inputs.dailyLimitInput.text?.toString())
+            val monthlyLimit = parseLimitInput(inputs.monthlyLimitInput.text?.toString())
+            if (dailyLimit == INVALID_LIMIT || monthlyLimit == INVALID_LIMIT) {
+                if (showValidationError) {
+                    Toast.makeText(this, R.string.invalid_limit_input, Toast.LENGTH_LONG).show()
+                }
+                return null
+            }
+            configs += PhoneNumberLimitConfig(
+                phoneNumber = phoneNumber,
+                dailyLimit = dailyLimit.takeIf { it != EMPTY_LIMIT },
+                monthlyLimit = monthlyLimit.takeIf { it != EMPTY_LIMIT },
+            )
+        }
+        return configs
     }
 
     private fun parseLimitInput(raw: String?): Int {
@@ -165,12 +187,12 @@ class SettingsActivity : AppCompatActivity() {
         bindingOverlaySwitch = false
     }
 
-    private fun canEnableOverlayWithLimits(dailyLimit: Int, monthlyLimit: Int): Boolean {
-        return dailyLimit > 0 || monthlyLimit > 0
+    private fun canEnableOverlayWithLimits(phoneNumbers: List<PhoneNumberLimitConfig>?): Boolean {
+        return phoneNumbers.orEmpty().any { it.dailyLimit != null || it.monthlyLimit != null }
     }
 
-    private fun evaluateOverlayEnablement(dailyLimit: Int, monthlyLimit: Int): OverlayEnablementStatus {
-        if (!canEnableOverlayWithLimits(dailyLimit, monthlyLimit)) {
+    private fun evaluateOverlayEnablement(phoneNumbers: List<PhoneNumberLimitConfig>?): OverlayEnablementStatus {
+        if (!canEnableOverlayWithLimits(phoneNumbers)) {
             return OverlayEnablementStatus.LIMITS_MISSING
         }
         if (!hasOverlayPermission()) {
@@ -214,8 +236,6 @@ class SettingsActivity : AppCompatActivity() {
                 token = token,
                 deviceInfo = deviceInfo,
                 phoneNumbers = config.phoneNumbers,
-                dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
-                monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
             )
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
@@ -229,6 +249,88 @@ class SettingsActivity : AppCompatActivity() {
                 .also { disposables.add(it) }
         }
     }
+
+    private fun syncPhoneNumberLimitInputs(
+        phoneNumbers: List<String>,
+        savedConfigs: Map<String, PhoneNumberLimitConfig> = emptyMap()
+    ) {
+        val currentValues = phoneNumberLimitInputs.mapValues { (_, inputs) ->
+            PhoneNumberLimitDraft(
+                dailyLimit = inputs.dailyLimitInput.text?.toString().orEmpty(),
+                monthlyLimit = inputs.monthlyLimitInput.text?.toString().orEmpty(),
+            )
+        }
+
+        phoneNumberLimitsContainer.removeAllViews()
+        phoneNumberLimitInputs.clear()
+
+        phoneNumbers.forEach { phoneNumber ->
+            val savedConfig = savedConfigs[phoneNumber]
+            val draft = currentValues[phoneNumber]
+            val row = createPhoneNumberLimitRow(
+                phoneNumber = phoneNumber,
+                dailyLimit = draft?.dailyLimit ?: savedConfig?.dailyLimit?.toString().orEmpty(),
+                monthlyLimit = draft?.monthlyLimit ?: savedConfig?.monthlyLimit?.toString().orEmpty(),
+            )
+            phoneNumberLimitsContainer.addView(row.container)
+            phoneNumberLimitInputs[phoneNumber] = row
+        }
+
+        if (phoneNumbers.isEmpty()) {
+            phoneNumberLimitsContainer.addView(
+                TextView(this).apply {
+                    text = getString(R.string.no_phone_numbers_configured)
+                }
+            )
+        }
+    }
+
+    private fun createPhoneNumberLimitRow(
+        phoneNumber: String,
+        dailyLimit: String,
+        monthlyLimit: String
+    ): PhoneNumberLimitInputViews {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(12)
+            }
+        }
+        val titleView = TextView(this).apply {
+            text = phoneNumber
+        }
+        val limitRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+        val dailyLimitInput = EditText(this).apply {
+            hint = getString(R.string.daily_limit_hint)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(dailyLimit)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val monthlyLimitInput = EditText(this).apply {
+            hint = getString(R.string.monthly_limit_hint)
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            setText(monthlyLimit)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginStart = dp(12)
+            }
+        }
+        limitRow.addView(dailyLimitInput)
+        limitRow.addView(monthlyLimitInput)
+        container.addView(titleView)
+        container.addView(limitRow)
+        return PhoneNumberLimitInputViews(container, dailyLimitInput, monthlyLimitInput)
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private enum class OverlayEnablementStatus {
         ENABLED,
@@ -251,3 +353,14 @@ class SettingsActivity : AppCompatActivity() {
             .distinct()
     }
 }
+
+private data class PhoneNumberLimitDraft(
+    val dailyLimit: String,
+    val monthlyLimit: String,
+)
+
+private data class PhoneNumberLimitInputViews(
+    val container: LinearLayout,
+    val dailyLimitInput: EditText,
+    val monthlyLimitInput: EditText,
+)

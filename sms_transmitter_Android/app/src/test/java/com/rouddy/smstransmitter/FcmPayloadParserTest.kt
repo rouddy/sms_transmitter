@@ -6,8 +6,24 @@ import org.junit.Test
 
 class FcmPayloadParserTest {
     @Test
+    fun `returns null when senderPhoneNumber is missing`() {
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "phoneNumber" to "01012345678",
+                "message" to "hello"
+            )
+        )
+        assertNull(payload)
+    }
+
+    @Test
     fun `returns null when phoneNumber is missing`() {
-        val payload = FcmPayloadParser.parse(mapOf("message" to "hello"))
+        val payload = FcmPayloadParser.parse(
+            mapOf(
+                "senderPhoneNumber" to "01011112222",
+                "message" to "hello"
+            )
+        )
         assertNull(payload)
     }
 
@@ -16,6 +32,7 @@ class FcmPayloadParserTest {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to " ",
+                "senderPhoneNumber" to "01011112222",
                 "message" to "hello"
             )
         )
@@ -27,6 +44,7 @@ class FcmPayloadParserTest {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to "01012345678",
+                "senderPhoneNumber" to "01011112222",
                 "callback" to "https://example.com"
             )
         )
@@ -38,6 +56,7 @@ class FcmPayloadParserTest {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to "01012345678",
+                "senderPhoneNumber" to "01011112222",
                 "message" to "   "
             )
         )
@@ -49,12 +68,14 @@ class FcmPayloadParserTest {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to "  01012345678  ",
+                "senderPhoneNumber" to " 01011112222 ",
                 "message" to "  hello sms  ",
                 "requestId" to " req-123 "
             )
         )
 
         requireNotNull(payload)
+        assertEquals("01011112222", payload.senderPhoneNumber)
         assertEquals("01012345678", payload.phoneNumber)
         assertEquals("hello sms", payload.message)
         assertEquals("req-123", payload.requestId)
@@ -65,6 +86,7 @@ class FcmPayloadParserTest {
         val payload = FcmPayloadParser.parse(
             mapOf(
                 "phoneNumber" to "01012345678",
+                "senderPhoneNumber" to "01011112222",
                 "message" to "hello sms"
             )
         )

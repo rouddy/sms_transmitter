@@ -115,6 +115,7 @@ impl FirebaseClient {
         fcm_token: &str,
         request_id: &str,
         phone_number: &str,
+        sender_phone_number: &str,
         message: &str,
     ) -> Result<()> {
         let access_token = self.get_access_token().await?;
@@ -122,6 +123,7 @@ impl FirebaseClient {
         let data = serde_json::json!({
             "requestId": request_id,
             "phoneNumber": phone_number,
+            "senderPhoneNumber": sender_phone_number,
             "message": message,
         });
 

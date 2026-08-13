@@ -17,8 +17,7 @@
     <string name="settings_saved">설정이 저장되었습니다.</string>
     <string name="invalid_limit_input">제한 횟수는 1 이상의 숫자만 입력할 수 있습니다.</string>
     <string name="unlimited">제한 없음</string>
-    <string name="default_daily_usage">일간 SMS: 사용 0 / 제한 없음</string>
-    <string name="default_monthly_usage">월간 SMS: 사용 0 / 제한 없음</string>
+    <string name="default_usage_summary">등록된 발신 번호가 없습니다.</string>
     <string name="period_daily">일간</string>
     <string name="period_monthly">월간</string>
     <string name="sms_usage_with_limit">%1$s SMS: 사용 %2$d / %3$d (남은 %4$d)</string>
@@ -28,10 +27,12 @@
     <string name="overlay_ui_toggle">Overlay UI 표시</string>
     <string name="overlay_requires_limits">Overlay UI를 사용하려면 일/월 한도 중 하나 이상을 설정해야 합니다.</string>
     <string name="overlay_permission_required">Overlay UI를 사용하려면 다른 앱 위에 표시 권한이 필요합니다.</string>
-    <string name="overlay_daily_label">일</string>
-    <string name="overlay_monthly_label">월</string>
     <string name="server_connection_failed">서버와의 연결에 실패했습니다.</string>
     <string name="phone_numbers_label">발신 가능 전화번호 (줄바꿈/쉼표 구분)</string>
     <string name="phone_numbers_hint">예: 01012345678</string>
+    <string name="phone_number_limits_label">번호별 한도 설정</string>
+    <string name="phone_number_usage_header">발신 번호: %1$s</string>
+    <string name="sender_phone_number_label">발신 번호</string>
+    <string name="no_phone_numbers_configured">전화번호를 입력하면 번호별 한도 입력란이 표시됩니다.</string>
     <string name="phone_number_permission_required">전화번호를 자동으로 읽으려면 전화 권한이 필요합니다.</string>
 </resources>
