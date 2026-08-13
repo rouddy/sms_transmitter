@@ -31,8 +31,10 @@ impl From<phone_number::Model> for PhoneNumberQuota {
         } else {
             model.daily_sent_count
         };
-        let monthly_sent_count = if model.last_monthly_reset.month() < today.month()
-            || model.last_monthly_reset.year() < today.year()
+        let monthly_sent_count = if (
+            model.last_monthly_reset.year(),
+            model.last_monthly_reset.month(),
+        ) < (today.year(), today.month())
         {
             0
         } else {
@@ -78,7 +80,10 @@ impl FcmToken {
             id: ID(model.id.to_string()),
             token: model.token,
             device_info: model.device_info,
-            phone_numbers: phone_numbers.into_iter().map(PhoneNumberQuota::from).collect(),
+            phone_numbers: phone_numbers
+                .into_iter()
+                .map(PhoneNumberQuota::from)
+                .collect(),
             created_at: model.created_at.to_string(),
             updated_at: model.updated_at.to_string(),
         }

@@ -46,8 +46,10 @@ impl Model {
     }
 
     fn effective_monthly_sent_count(&self, today: NaiveDate) -> i32 {
-        if self.last_monthly_reset.month() < today.month()
-            || self.last_monthly_reset.year() < today.year()
+        if (
+            self.last_monthly_reset.year(),
+            self.last_monthly_reset.month(),
+        ) < (today.year(), today.month())
         {
             0
         } else {
@@ -72,7 +74,9 @@ impl Model {
     }
 
     pub fn can_send_now(&self) -> bool {
-        self.daily_remaining().map(|remaining| remaining > 0).unwrap_or(true)
+        self.daily_remaining()
+            .map(|remaining| remaining > 0)
+            .unwrap_or(true)
             && self
                 .monthly_remaining()
                 .map(|remaining| remaining > 0)
@@ -95,8 +99,10 @@ impl Model {
         if self.last_daily_reset < today {
             self.daily_sent_count = 0;
         }
-        if self.last_monthly_reset.month() < today.month()
-            || self.last_monthly_reset.year() < today.year()
+        if (
+            self.last_monthly_reset.year(),
+            self.last_monthly_reset.month(),
+        ) < (today.year(), today.month())
         {
             self.monthly_sent_count = 0;
         }

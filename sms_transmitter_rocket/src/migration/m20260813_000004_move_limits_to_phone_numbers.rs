@@ -127,7 +127,8 @@ impl MigrationTrait for Migration {
                 PRAGMA foreign_keys = ON;
                 "#,
             )
-            .await
+            .await?;
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
@@ -281,6 +282,7 @@ impl MigrationTrait for Migration {
                 PRAGMA foreign_keys = ON;
                 "#,
             )
-            .await
+            .await?;
+        Ok(())
     }
 }

@@ -5,8 +5,8 @@ A Rust backend for relaying SMS messages via Android devices using Firebase Clou
 ## How It Works
 
 1. A client calls the `requestSms` GraphQL mutation with a phone number and message.
-2. The server selects an available Android device (by FCM token) that has remaining daily/monthly quota.
-3. The server sends an FCM data message to the device with keys `phoneNumber`, `message`, and `requestId`.
+2. The server selects an available sender phone number registered under an Android device that has remaining daily/monthly quota.
+3. The server sends an FCM data message to the device with keys `senderPhoneNumber`, `phoneNumber`, `message`, and `requestId`.
 4. The Android app receives the FCM message, sends the SMS, and calls `reportSmsResult` on this server's GraphQL endpoint to report success or failure.
 5. When `reportSmsResult` is received, the server calls `callbackUrl` (if provided in the original request).
 
@@ -35,21 +35,27 @@ Navigate to `http://localhost:8000/graphiql` for the interactive explorer.
 - `token`
 - `deviceInfo`
 - `phoneNumbers`
+- `createdAt`
+- `updatedAt`
+
+`PhoneNumberQuota` fields:
+
+- `id`
+- `phoneNumber`
 - `dailyLimit`
 - `monthlyLimit`
 - `dailySentCount`
 - `monthlySentCount`
 - `dailyRemaining`
 - `monthlyRemaining`
-- `createdAt`
-- `updatedAt`
+- `lastDailyReset`
+- `lastMonthlyReset`
 
 `RegisterFcmTokenInput` fields:
 
 - `token`
 - `deviceInfo`
-- `dailyLimit`
-- `monthlyLimit`
+- `phoneNumbers`
 
 Register or update a device token:
 
@@ -58,20 +64,26 @@ mutation {
   registerFcmToken(input: {
     token: "<FCM_TOKEN>"
     deviceInfo: "Pixel 7"
-    phoneNumbers: ["01012345678", "01099998888"]
-    dailyLimit: 100
-    monthlyLimit: 2000
+    phoneNumbers: [
+      { phoneNumber: "01012345678", dailyLimit: 100, monthlyLimit: 2000 }
+      { phoneNumber: "01099998888", dailyLimit: 0, monthlyLimit: 0 }
+    ]
   }) {
     id
     token
     deviceInfo
-    phoneNumbers
-    dailyLimit
-    monthlyLimit
-    dailySentCount
-    monthlySentCount
-    dailyRemaining
-    monthlyRemaining
+    phoneNumbers {
+      id
+      phoneNumber
+      dailyLimit
+      monthlyLimit
+      dailySentCount
+      monthlySentCount
+      dailyRemaining
+      monthlyRemaining
+      lastDailyReset
+      lastMonthlyReset
+    }
     createdAt
     updatedAt
   }
@@ -86,13 +98,18 @@ query {
     id
     token
     deviceInfo
-    phoneNumbers
-    dailyLimit
-    monthlyLimit
-    dailySentCount
-    monthlySentCount
-    dailyRemaining
-    monthlyRemaining
+    phoneNumbers {
+      id
+      phoneNumber
+      dailyLimit
+      monthlyLimit
+      dailySentCount
+      monthlySentCount
+      dailyRemaining
+      monthlyRemaining
+      lastDailyReset
+      lastMonthlyReset
+    }
     createdAt
     updatedAt
   }
@@ -107,7 +124,7 @@ mutation {
 }
 ```
 
-Note: registering the same `token` again updates `deviceInfo`, `phoneNumbers`, `dailyLimit`, `monthlyLimit`, and `updatedAt`. Existing sent counts are preserved.
+Note: registering the same `token` again updates `deviceInfo`, `phoneNumbers`, per-phone-number limits, and `updatedAt`. Existing sent counts are preserved for unchanged phone numbers.
 
 ### SMS Request
 
@@ -127,6 +144,7 @@ Note: registering the same `token` again updates `deviceInfo`, `phoneNumbers`, `
 - `callbackResponseBody`
 - `status`
 - `assignedDeviceId`
+- `assignedPhoneNumberId`
 - `error`
 - `createdAt`
 - `updatedAt`
@@ -142,8 +160,6 @@ Note: registering the same `token` again updates `deviceInfo`, `phoneNumbers`, `
 - `requestId`
 - `success`
 - `error`
-- `dailySentCount`
-- `monthlySentCount`
 
 Create an SMS request:
 
@@ -162,6 +178,7 @@ mutation {
     callbackResponseBody
     status
     assignedDeviceId
+    assignedPhoneNumberId
     error
     createdAt
     updatedAt
@@ -177,8 +194,6 @@ mutation {
     requestId: "<UUID>"
     success: true
     error: null
-    dailySentCount: 1
-    monthlySentCount: 10
   })
 }
 ```
@@ -196,6 +211,7 @@ query {
     callbackResponseBody
     status
     assignedDeviceId
+    assignedPhoneNumberId
     error
     createdAt
     updatedAt

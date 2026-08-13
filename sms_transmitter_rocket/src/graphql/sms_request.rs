@@ -1,7 +1,10 @@
 use async_graphql::{Context, Enum, InputObject, Object, Result, SimpleObject, ID};
 use chrono::Local;
 use reqwest::Client;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set, TransactionTrait};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set,
+    TransactionTrait,
+};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -110,7 +113,9 @@ impl SmsRequestMutation {
             .iter()
             .map(|token| (token.id, token.clone()))
             .collect::<std::collections::HashMap<_, _>>();
+        let token_ids = token_by_id.keys().copied().collect::<Vec<_>>();
         let phone_numbers = phone_number::Entity::find()
+            .filter(phone_number::Column::FcmTokenId.is_in(token_ids))
             .all(&txn)
             .await
             .expect("Find Phone Numbers Error");
@@ -128,7 +133,7 @@ impl SmsRequestMutation {
                 a.availability_score()
                     .partial_cmp(&b.availability_score())
                     .unwrap_or(std::cmp::Ordering::Equal)
-            })
+            });
 
         if selected.is_none() {
             return Err("남은 sms 쿼터가 없습니다.".to_string());
@@ -224,7 +229,7 @@ impl SmsRequestMutation {
                     .ok_or_else(|| async_graphql::Error::new("assigned phone number not found"))?;
                 let today = now.date();
                 phone_number_model.increment_sent_counts(today);
-                let mut phone_number_active: phone_number::ActiveModel = phone_number_model.into();
+                let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
                 phone_number_active.update(&txn).await?;
             } else if let Some(token_id) = request.assigned_token_id {
                 let token = fcm_token::Entity::find_by_id(token_id)
@@ -237,7 +242,7 @@ impl SmsRequestMutation {
                     .await?;
                 if let Some(mut phone_number_model) = fallback_phone_number {
                     phone_number_model.increment_sent_counts(now.date());
-                    let mut phone_number_active: phone_number::ActiveModel = phone_number_model.into();
+                    let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
                     phone_number_active.update(&txn).await?;
                 }
             }

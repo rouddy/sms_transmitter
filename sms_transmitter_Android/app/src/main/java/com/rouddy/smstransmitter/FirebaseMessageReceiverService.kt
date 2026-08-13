@@ -39,7 +39,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = FcmPayloadParser.parse(remoteMessage.data)
         if (payload == null) {
-        Log.w(TAG, "Missing or empty sender/destination/message in FCM data payload.")
+            Log.w(TAG, "Missing or empty sender/destination/message in FCM data payload.")
             return
         }
 
