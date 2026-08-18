@@ -38,9 +38,10 @@ Navigate to `http://localhost:8000/graphiql` for the interactive explorer.
 - `createdAt`
 - `updatedAt`
 
-`PhoneNumberQuota` fields:
+`PhoneNumber` fields:
 
 - `id`
+- `fcmTokenId`
 - `phoneNumber`
 - `dailyLimit`
 - `monthlyLimit`
