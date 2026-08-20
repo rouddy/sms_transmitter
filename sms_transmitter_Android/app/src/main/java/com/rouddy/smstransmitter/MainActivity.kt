@@ -9,11 +9,14 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.firebase.messaging.FirebaseMessaging
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
@@ -24,7 +27,11 @@ import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
     private lateinit var usageSummaryView: TextView
-    private lateinit var historyContentView: TextView
+    private lateinit var historyRecyclerView: RecyclerView
+    private lateinit var emptyHistoryView: View
+    private lateinit var swipeRefreshLayout: SwipeRefreshLayout
+    private lateinit var historyAdapter: SmsHistoryAdapter
+
     private lateinit var smsHistoryDb: SmsHistoryDatabase
     private lateinit var smsLimitSettings: SmsLimitSettings
     private val disposables = CompositeDisposable()
@@ -56,7 +63,16 @@ class MainActivity : AppCompatActivity() {
         smsLimitSettings = SmsLimitSettings(this)
         smsHistoryDb = SmsHistoryDatabase(this)
         usageSummaryView = findViewById(R.id.usage_summary_content)
-        historyContentView = findViewById(R.id.history_content)
+        historyRecyclerView = findViewById(R.id.history_recycler_view)
+        emptyHistoryView = findViewById(R.id.empty_history_view)
+        swipeRefreshLayout = findViewById(R.id.swipe_refresh_layout)
+
+        historyAdapter = SmsHistoryAdapter(historyDateFormatter)
+        historyRecyclerView.adapter = historyAdapter
+
+        swipeRefreshLayout.setOnRefreshListener {
+            renderHistory()
+        }
 
         ensureSmsPermission()
         registerFcmTokenWithServer()
@@ -138,27 +154,17 @@ class MainActivity : AppCompatActivity() {
         renderRemainingCounts()
 
         val histories = smsHistoryDb.getRecentSmsHistories()
+        swipeRefreshLayout.isRefreshing = false
+
         if (histories.isEmpty()) {
-            historyContentView.text = getString(R.string.no_history)
+            historyRecyclerView.visibility = View.GONE
+            emptyHistoryView.visibility = View.VISIBLE
             return
         }
 
-        val content = histories.joinToString(separator = "\n\n") { item ->
-            val smsStatus = if (item.smsSuccess) {
-                getString(R.string.sms_success)
-            } else {
-                getString(R.string.sms_failure)
-            }
-            buildString {
-                append("시간: ${historyDateFormatter.format(Date(item.createdAtMillis))}\n")
-                append("${getString(R.string.sender_phone_number_label)}: ${item.senderPhoneNumber ?: "-"}\n")
-                append("수신번호: ${item.phoneNumber}\n")
-                append("메시지: ${item.message}\n")
-                append("SMS: $smsStatus")
-                if (!item.smsError.isNullOrBlank()) append(" (${item.smsError})")
-            }
-        }
-        historyContentView.text = content
+        historyRecyclerView.visibility = View.VISIBLE
+        emptyHistoryView.visibility = View.GONE
+        historyAdapter.submitList(histories)
     }
 
     private fun renderRemainingCounts() {
