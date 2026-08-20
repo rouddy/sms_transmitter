@@ -86,13 +86,13 @@ impl Model {
     pub fn availability_score(&self) -> f32 {
         let daily_ratio = match self.daily_remaining() {
             Some(remaining) => remaining as f32 / self.daily_limit as f32,
-            None => 1.0,
+            None => 0.0,
         };
         let monthly_ratio = match self.monthly_remaining() {
             Some(remaining) => remaining as f32 / self.monthly_limit as f32,
-            None => 1.0,
+            None => 0.0,
         };
-        daily_ratio.min(monthly_ratio)
+        daily_ratio * 10.0 + monthly_ratio
     }
 
     pub fn increment_sent_counts(&mut self, today: NaiveDate) {
