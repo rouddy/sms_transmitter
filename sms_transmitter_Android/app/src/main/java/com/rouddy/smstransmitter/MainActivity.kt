@@ -9,8 +9,6 @@ import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.view.View
-import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -25,10 +23,7 @@ import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var dailyUsageView: TextView
-    private lateinit var monthlyUsageView: TextView
-    private lateinit var dailyUsageProgress: ProgressBar
-    private lateinit var monthlyUsageProgress: ProgressBar
+    private lateinit var usageSummaryView: TextView
     private lateinit var historyContentView: TextView
     private lateinit var smsHistoryDb: SmsHistoryDatabase
     private lateinit var smsLimitSettings: SmsLimitSettings
@@ -36,9 +31,21 @@ class MainActivity : AppCompatActivity() {
     private val historyDateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
 
     private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (!granted) {
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            val smsGranted = result[Manifest.permission.SEND_SMS] ?: hasPermission(Manifest.permission.SEND_SMS)
+            val readPhoneNumbersGranted = result[Manifest.permission.READ_PHONE_NUMBERS] ?: hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
+
+            if (!smsGranted) {
                 Toast.makeText(this, R.string.sms_permission_required, Toast.LENGTH_LONG).show()
+            }
+
+            if (!readPhoneNumbersGranted) {
+                Toast.makeText(this, R.string.phone_number_permission_required, Toast.LENGTH_LONG).show()
+            }
+
+            if (smsGranted && readPhoneNumbersGranted) {
+                smsLimitSettings.initializePhoneNumbersIfNeeded(this)
+                registerFcmTokenWithServer()
             }
         }
 
@@ -48,10 +55,7 @@ class MainActivity : AppCompatActivity() {
 
         smsLimitSettings = SmsLimitSettings(this)
         smsHistoryDb = SmsHistoryDatabase(this)
-        dailyUsageView = findViewById(R.id.daily_usage_content)
-        monthlyUsageView = findViewById(R.id.monthly_usage_content)
-        dailyUsageProgress = findViewById(R.id.progress_daily_usage)
-        monthlyUsageProgress = findViewById(R.id.progress_monthly_usage)
+        usageSummaryView = findViewById(R.id.usage_summary_content)
         historyContentView = findViewById(R.id.history_content)
 
         ensureSmsPermission()
@@ -88,16 +92,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun ensureSmsPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            permissionLauncher.launch(Manifest.permission.SEND_SMS)
+        val permissionsToRequest = mutableListOf<String>()
+        if (!hasPermission(Manifest.permission.SEND_SMS)) {
+            permissionsToRequest.add(Manifest.permission.SEND_SMS)
+        }
+        if (!hasPermission(Manifest.permission.READ_PHONE_NUMBERS)) {
+            permissionsToRequest.add(Manifest.permission.READ_PHONE_NUMBERS)
+        }
+        if (permissionsToRequest.isNotEmpty()) {
+            permissionLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
     private fun registerFcmTokenWithServer() {
-        val config = smsLimitSettings.getConfig()
-        val serverUrl = config.serverUrl ?: return
+        smsLimitSettings.initializePhoneNumbersIfNeeded(this)
+        val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
 
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (!task.isSuccessful) {
@@ -106,11 +115,11 @@ class MainActivity : AppCompatActivity() {
             }
             val token = task.result ?: return@addOnCompleteListener
             val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
+            val config = smsLimitSettings.getConfig()
             val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
                 deviceInfo = deviceInfo,
-                dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
-                monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
+                phoneNumbers = config.phoneNumbers,
             )
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
@@ -142,6 +151,7 @@ class MainActivity : AppCompatActivity() {
             }
             buildString {
                 append("시간: ${historyDateFormatter.format(Date(item.createdAtMillis))}\n")
+                append("${getString(R.string.sender_phone_number_label)}: ${item.senderPhoneNumber ?: "-"}\n")
                 append("수신번호: ${item.phoneNumber}\n")
                 append("메시지: ${item.message}\n")
                 append("SMS: $smsStatus")
@@ -154,71 +164,73 @@ class MainActivity : AppCompatActivity() {
     private fun renderRemainingCounts() {
         val now = System.currentTimeMillis()
         val config = smsLimitSettings.getConfig()
+        if (config.phoneNumbers.isEmpty()) {
+            usageSummaryView.text = getString(R.string.default_usage_summary)
+            return
+        }
 
-        val todaySentCount = smsHistoryDb.countSuccessfulSmsBetween(
-            SmsLimitSettings.getStartOfTodayMillis(now),
-            SmsLimitSettings.getStartOfNextDayMillis(now)
-        )
-        val monthSentCount = smsHistoryDb.countSuccessfulSmsBetween(
-            SmsLimitSettings.getStartOfMonthMillis(now),
-            SmsLimitSettings.getStartOfNextMonthMillis(now)
-        )
-
-        renderUsageRow(
-            limit = config.dailyLimit,
-            sentCount = todaySentCount,
-            periodLabel = getString(R.string.period_daily),
-            textView = dailyUsageView,
-            progressBar = dailyUsageProgress
-        )
-        renderUsageRow(
-            limit = config.monthlyLimit,
-            sentCount = monthSentCount,
-            periodLabel = getString(R.string.period_monthly),
-            textView = monthlyUsageView,
-            progressBar = monthlyUsageProgress
-        )
+        val summary = config.phoneNumbers.joinToString(separator = "\n\n") { phoneConfig ->
+            val todaySentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
+                phoneConfig.phoneNumber,
+                SmsLimitSettings.getStartOfTodayMillis(now),
+                SmsLimitSettings.getStartOfNextDayMillis(now)
+            )
+            val monthSentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
+                phoneConfig.phoneNumber,
+                SmsLimitSettings.getStartOfMonthMillis(now),
+                SmsLimitSettings.getStartOfNextMonthMillis(now)
+            )
+            buildString {
+                append(getString(R.string.phone_number_usage_header, phoneConfig.phoneNumber))
+                append('\n')
+                append(
+                    formatUsageLine(
+                        periodLabel = getString(R.string.period_daily),
+                        limit = phoneConfig.dailyLimit,
+                        sentCount = todaySentCount
+                    )
+                )
+                append('\n')
+                append(
+                    formatUsageLine(
+                        periodLabel = getString(R.string.period_monthly),
+                        limit = phoneConfig.monthlyLimit,
+                        sentCount = monthSentCount
+                    )
+                )
+            }
+        }
+        usageSummaryView.text = summary
     }
 
-    private fun renderUsageRow(
-        limit: Int?,
-        sentCount: Int,
-        periodLabel: String,
-        textView: TextView,
-        progressBar: ProgressBar
-    ) {
-        if (limit != null && limit > 0) {
-            val remainingCount = (limit - sentCount).coerceAtLeast(0)
-            textView.text = getString(
+    private fun formatUsageLine(periodLabel: String, limit: Int?, sentCount: Int): String {
+        return if (limit != null && limit > 0) {
+            getString(
                 R.string.sms_usage_with_limit,
                 periodLabel,
                 sentCount,
                 limit,
-                remainingCount
+                (limit - sentCount).coerceAtLeast(0)
             )
-            progressBar.visibility = View.VISIBLE
-            progressBar.max = limit
-            progressBar.progress = sentCount.coerceAtMost(limit)
         } else {
-            textView.text = getString(
-                R.string.sms_usage_unlimited,
-                periodLabel,
-                sentCount
-            )
-            progressBar.visibility = View.GONE
+            getString(R.string.sms_usage_unlimited, periodLabel, sentCount)
         }
     }
 
     private fun refreshOverlayUi() {
         val config = smsLimitSettings.getConfig()
         val shouldShowOverlay = config.overlayEnabled &&
-            (config.dailyLimit != null || config.monthlyLimit != null) &&
+            config.phoneNumbers.any { it.dailyLimit != null || it.monthlyLimit != null } &&
             Settings.canDrawOverlays(this)
         if (shouldShowOverlay) {
             UsageOverlayService.start(this)
         } else {
             UsageOverlayService.stop(this)
         }
+    }
+
+    private fun hasPermission(permission: String): Boolean {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
     }
 
     companion object {

@@ -1,10 +1,15 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.telephony.PhoneNumberUtils
 import android.telephony.SmsManager
+import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -17,15 +22,16 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        val config = SmsLimitSettings(applicationContext).getConfig()
+        val settings = SmsLimitSettings(applicationContext)
+        settings.initializePhoneNumbersIfNeeded(applicationContext)
+        val config = settings.getConfig()
         val serverUrl = config.serverUrl ?: return
 
         val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
         val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
             token = token,
             deviceInfo = deviceInfo,
-            dailyLimit = config.dailyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
-            monthlyLimit = config.monthlyLimit ?: GraphQlClient.LIMIT_UNLIMITED,
+            phoneNumbers = config.phoneNumbers,
         )
             .subscribeOn(Schedulers.io())
             .subscribe(
@@ -38,35 +44,33 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         val payload = FcmPayloadParser.parse(remoteMessage.data)
         if (payload == null) {
-            Log.w(TAG, "Missing or empty 'phoneNumber'/'message' in FCM data payload.")
+            Log.w(TAG, "Missing or empty sender/destination/message in FCM data payload.")
             return
         }
 
         val historyDb = SmsHistoryDatabase(applicationContext)
         try {
-            val smsResult = sendSmsSafely(payload.phoneNumber, payload.message, historyDb)
+            val smsResult = sendSmsSafely(
+                senderPhoneNumber = payload.senderPhoneNumber,
+                destinationPhoneNumber = payload.phoneNumber,
+                message = payload.message,
+                historyDb = historyDb
+            )
             historyDb.insertSmsHistory(
+                senderPhoneNumber = payload.senderPhoneNumber,
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
                 smsSuccess = smsResult.success,
                 smsError = smsResult.error
             )
-            val now = System.currentTimeMillis()
-            val dailySentCount = historyDb.countSuccessfulSmsBetween(
-                SmsLimitSettings.getStartOfTodayMillis(now),
-                SmsLimitSettings.getStartOfNextDayMillis(now)
-            )
-            val monthlySentCount = historyDb.countSuccessfulSmsBetween(
-                SmsLimitSettings.getStartOfMonthMillis(now),
-                SmsLimitSettings.getStartOfNextMonthMillis(now)
-            )
-            reportSmsResultSafely(payload.requestId, smsResult, dailySentCount, monthlySentCount)
+            reportSmsResultSafely(payload.requestId, smsResult)
         } finally {
             historyDb.close()
         }
     }
 
     private fun sendSmsSafely(
+        senderPhoneNumber: String,
         destinationPhoneNumber: String,
         message: String,
         historyDb: SmsHistoryDatabase
@@ -79,13 +83,14 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             Log.w(TAG, "SEND_SMS permission not granted.")
             return SendSmsResult(success = false, error = "SEND_SMS permission not granted.")
         }
-        checkLimitReachedError(historyDb)?.let { limitError ->
+        checkLimitReachedError(historyDb, senderPhoneNumber)?.let { limitError ->
             Log.w(TAG, limitError)
             return SendSmsResult(success = false, error = limitError)
         }
 
         return runCatching {
-            val smsManager = SmsManager.getDefault()
+            // Kotlin 예시
+            val smsManager = getSmsManager(senderPhoneNumber)
             val messageParts = smsManager.divideMessage(message)
             if (messageParts.size > 1) {
                 smsManager.sendMultipartTextMessage(destinationPhoneNumber, null, messageParts, null, null)
@@ -100,12 +105,48 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
     }
 
-    private fun checkLimitReachedError(historyDb: SmsHistoryDatabase): String? {
+    private fun getSmsManager(senderPhoneNumber: String): SmsManager {
+        val subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalArgumentException("READ_PHONE_NUMBERS permission not granted.")
+        }
+
+        val activeInfoList: List<SubscriptionInfo>? = subscriptionManager.activeSubscriptionInfoList
+        var matchedSubId: Int? = null
+
+        val normalizedTarget = PhoneNumberUtils.normalizeNumber(senderPhoneNumber)
+
+        if (activeInfoList != null) {
+            for (info in activeInfoList) {
+                val simPhoneNumber = subscriptionManager.getPhoneNumber(info.subscriptionId)
+
+                if (simPhoneNumber.isNotBlank()) {
+                    val normalizedSimNumber = PhoneNumberUtils.normalizeNumber(simPhoneNumber)
+                    if (normalizedSimNumber == normalizedTarget || simPhoneNumber.contains(normalizedTarget)) {
+                        matchedSubId = info.subscriptionId
+                        break
+                    }
+                }
+            }
+        }
+
+        if (matchedSubId != null) {
+            return getSystemService(SmsManager::class.java).createForSubscriptionId(matchedSubId)
+        } else {
+            throw IllegalArgumentException("No matching SIM found for $senderPhoneNumber.")
+        }
+    }
+
+    private fun checkLimitReachedError(historyDb: SmsHistoryDatabase, payloadSenderPhoneNumber: String?): String? {
         val settings = SmsLimitSettings(applicationContext).getConfig()
+        val senderPhoneNumber = payloadSenderPhoneNumber ?: return null
+        val senderConfig = settings.phoneNumbers.firstOrNull { it.phoneNumber == senderPhoneNumber } ?: return null
         val now = System.currentTimeMillis()
 
-        settings.dailyLimit?.let { dailyLimit ->
-            val todaySentCount = historyDb.countSuccessfulSmsBetween(
+        senderConfig.dailyLimit?.let { dailyLimit ->
+            val todaySentCount = historyDb.countSuccessfulSmsBetweenForSender(
+                senderPhoneNumber,
                 SmsLimitSettings.getStartOfTodayMillis(now),
                 SmsLimitSettings.getStartOfNextDayMillis(now)
             )
@@ -114,8 +155,9 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             }
         }
 
-        settings.monthlyLimit?.let { monthlyLimit ->
-            val monthSentCount = historyDb.countSuccessfulSmsBetween(
+        senderConfig.monthlyLimit?.let { monthlyLimit ->
+            val monthSentCount = historyDb.countSuccessfulSmsBetweenForSender(
+                senderPhoneNumber,
                 SmsLimitSettings.getStartOfMonthMillis(now),
                 SmsLimitSettings.getStartOfNextMonthMillis(now)
             )
@@ -127,7 +169,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         return null
     }
 
-    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult, dailySentCount: Int, monthlySentCount: Int) {
+    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult) {
         if (requestId.isNullOrBlank()) return
         val config = SmsLimitSettings(applicationContext).getConfig()
         val serverUrl = config.serverUrl ?: return
@@ -136,8 +178,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             requestId = requestId,
             success = smsResult.success,
             error = smsResult.error,
-            dailySentCount = dailySentCount,
-            monthlySentCount = monthlySentCount,
         )
             .subscribeOn(Schedulers.io())
             .subscribe(

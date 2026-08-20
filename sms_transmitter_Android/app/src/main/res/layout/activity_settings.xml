@@ -24,31 +24,29 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:labelFor="@id/input_daily_limit"
-        android:text="@string/daily_limit_label" />
+        android:labelFor="@id/input_phone_numbers"
+        android:text="@string/phone_numbers_label" />
 
     <EditText
-        android:id="@+id/input_daily_limit"
+        android:id="@+id/input_phone_numbers"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:contentDescription="@string/daily_limit_label"
-        android:hint="@string/daily_limit_hint"
-        android:inputType="number" />
+        android:contentDescription="@string/phone_numbers_label"
+        android:hint="@string/phone_numbers_hint"
+        android:inputType="textMultiLine"
+        android:minLines="2" />
 
     <TextView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="16dp"
-        android:labelFor="@id/input_monthly_limit"
-        android:text="@string/monthly_limit_label" />
+        android:text="@string/phone_number_limits_label" />
 
-    <EditText
-        android:id="@+id/input_monthly_limit"
+    <LinearLayout
+        android:id="@+id/phone_number_limits_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:contentDescription="@string/monthly_limit_label"
-        android:hint="@string/monthly_limit_hint"
-        android:inputType="number" />
+        android:orientation="vertical" />
 
     <com.google.android.material.switchmaterial.SwitchMaterial
         android:id="@+id/switch_overlay_ui"

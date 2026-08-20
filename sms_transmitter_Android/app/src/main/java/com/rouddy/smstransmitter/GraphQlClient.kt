@@ -19,8 +19,7 @@ class GraphQlClient(private val serverUrl: String) {
     fun registerFcmToken(
         token: String,
         deviceInfo: String,
-        dailyLimit: Int,
-        monthlyLimit: Int,
+        phoneNumbers: List<PhoneNumberLimitConfig>,
     ): Single<Unit> {
         val mutation = """
             mutation RegisterFcmToken(${'$'}input: RegisterFcmTokenInput!) {
@@ -34,8 +33,13 @@ class GraphQlClient(private val serverUrl: String) {
             "input" to mapOf(
                 "token" to token,
                 "deviceInfo" to deviceInfo,
-                "dailyLimit" to dailyLimit,
-                "monthlyLimit" to monthlyLimit,
+                "phoneNumbers" to phoneNumbers.map { phoneNumber ->
+                    mapOf(
+                        "phoneNumber" to phoneNumber.phoneNumber,
+                        "dailyLimit" to (phoneNumber.dailyLimit ?: LIMIT_UNLIMITED),
+                        "monthlyLimit" to (phoneNumber.monthlyLimit ?: LIMIT_UNLIMITED),
+                    )
+                },
             )
         )
 
@@ -50,8 +54,6 @@ class GraphQlClient(private val serverUrl: String) {
         requestId: String,
         success: Boolean,
         error: String?,
-        dailySentCount: Int,
-        monthlySentCount: Int,
     ): Single<Unit> {
         val mutation = """
             mutation ReportSmsResult(${'$'}input: ReportSmsResultInput!) {
@@ -62,8 +64,6 @@ class GraphQlClient(private val serverUrl: String) {
         val inputMap = mutableMapOf<String, Any>(
             "requestId" to requestId,
             "success" to success,
-            "dailySentCount" to dailySentCount,
-            "monthlySentCount" to monthlySentCount,
         )
         if (error != null) inputMap["error"] = error
 
@@ -90,4 +90,3 @@ class GraphQlClient(private val serverUrl: String) {
 }
 
 class GraphQlException(message: String) : Exception(message)
-

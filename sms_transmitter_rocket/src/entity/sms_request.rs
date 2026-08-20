@@ -14,6 +14,7 @@ pub struct Model {
     pub callback_response_body: Option<String>,
     pub status: String,
     pub assigned_token_id: Option<Uuid>,
+    pub assigned_phone_number_id: Option<Uuid>,
     pub error: Option<String>,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
@@ -27,11 +28,23 @@ pub enum Relation {
         to = "super::fcm_token::Column::Id"
     )]
     FcmToken,
+    #[sea_orm(
+        belongs_to = "super::phone_number::Entity",
+        from = "Column::AssignedPhoneNumberId",
+        to = "super::phone_number::Column::Id"
+    )]
+    PhoneNumber,
 }
 
 impl Related<super::fcm_token::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::FcmToken.def()
+    }
+}
+
+impl Related<super::phone_number::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::PhoneNumber.def()
     }
 }
 
