@@ -33,19 +33,17 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             val smsGranted = result[Manifest.permission.SEND_SMS] ?: hasPermission(Manifest.permission.SEND_SMS)
+            val readPhoneNumbersGranted = result[Manifest.permission.READ_PHONE_NUMBERS] ?: hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
+
             if (!smsGranted) {
                 Toast.makeText(this, R.string.sms_permission_required, Toast.LENGTH_LONG).show()
             }
-            val readPhoneStateGranted =
-                result[Manifest.permission.READ_PHONE_STATE] ?: hasPermission(Manifest.permission.READ_PHONE_STATE)
-            val readPhoneNumbersGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                result[Manifest.permission.READ_PHONE_NUMBERS] ?: hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
-            } else {
-                true
-            }
-            if (!readPhoneStateGranted || !readPhoneNumbersGranted) {
+
+            if (!readPhoneNumbersGranted) {
                 Toast.makeText(this, R.string.phone_number_permission_required, Toast.LENGTH_LONG).show()
-            } else {
+            }
+
+            if (smsGranted && readPhoneNumbersGranted) {
                 smsLimitSettings.initializePhoneNumbersIfNeeded(this)
                 registerFcmTokenWithServer()
             }
@@ -98,12 +96,7 @@ class MainActivity : AppCompatActivity() {
         if (!hasPermission(Manifest.permission.SEND_SMS)) {
             permissionsToRequest.add(Manifest.permission.SEND_SMS)
         }
-        if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) {
-            permissionsToRequest.add(Manifest.permission.READ_PHONE_STATE)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            !hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
-        ) {
+        if (!hasPermission(Manifest.permission.READ_PHONE_NUMBERS)) {
             permissionsToRequest.add(Manifest.permission.READ_PHONE_NUMBERS)
         }
         if (permissionsToRequest.isNotEmpty()) {

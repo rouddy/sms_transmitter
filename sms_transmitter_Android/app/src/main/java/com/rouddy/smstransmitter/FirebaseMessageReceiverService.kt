@@ -1,10 +1,15 @@
 package com.rouddy.smstransmitter
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.telephony.PhoneNumberUtils
 import android.telephony.SmsManager
+import android.telephony.SubscriptionInfo
+import android.telephony.SubscriptionManager
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
@@ -84,7 +89,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         }
 
         return runCatching {
-            val smsManager = SmsManager.getDefault()
+            // Kotlin 예시
+            val smsManager = getSmsManager(senderPhoneNumber)
             val messageParts = smsManager.divideMessage(message)
             if (messageParts.size > 1) {
                 smsManager.sendMultipartTextMessage(destinationPhoneNumber, null, messageParts, null, null)
@@ -96,6 +102,39 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             Log.e(TAG, "Failed to send SMS.", it)
         }.getOrElse {
             SendSmsResult(success = false, error = it.message ?: "Failed to send SMS.")
+        }
+    }
+
+    private fun getSmsManager(senderPhoneNumber: String): SmsManager {
+        val subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalArgumentException("READ_PHONE_NUMBERS permission not granted.")
+        }
+
+        val activeInfoList: List<SubscriptionInfo>? = subscriptionManager.activeSubscriptionInfoList
+        var matchedSubId: Int? = null
+
+        val normalizedTarget = PhoneNumberUtils.normalizeNumber(senderPhoneNumber)
+
+        if (activeInfoList != null) {
+            for (info in activeInfoList) {
+                val simPhoneNumber = subscriptionManager.getPhoneNumber(info.subscriptionId)
+
+                if (simPhoneNumber.isNotBlank()) {
+                    val normalizedSimNumber = PhoneNumberUtils.normalizeNumber(simPhoneNumber)
+                    if (normalizedSimNumber == normalizedTarget || simPhoneNumber.contains(normalizedTarget)) {
+                        matchedSubId = info.subscriptionId
+                        break
+                    }
+                }
+            }
+        }
+
+        if (matchedSubId != null) {
+            return getSystemService(SmsManager::class.java).createForSubscriptionId(matchedSubId)
+        } else {
+            throw IllegalArgumentException("No matching SIM found for $senderPhoneNumber.")
         }
     }
 
