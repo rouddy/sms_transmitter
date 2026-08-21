@@ -12,6 +12,7 @@ pub struct Model {
     pub device_info: String,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+    pub last_access_time: NaiveDateTime,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

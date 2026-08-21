@@ -18,6 +18,7 @@ pub struct FcmToken {
     pub device_info: String,
     pub created_at: String,
     pub updated_at: String,
+    pub last_access_time: String,
 }
 
 #[ComplexObject]
@@ -42,6 +43,7 @@ impl From<fcm_token::Model> for FcmToken {
             device_info: model.device_info,
             created_at: model.created_at.to_string(),
             updated_at: model.updated_at.to_string(),
+            last_access_time: model.last_access_time.to_string(),
         }
     }
 }
@@ -84,12 +86,17 @@ impl FcmTokenMutation {
             device_info: Set(input.device_info),
             created_at: Set(now),
             updated_at: Set(now),
+            last_access_time: Set(now),
         };
 
         fcm_token::Entity::insert(active)
             .on_conflict(
                 OnConflict::column(fcm_token::Column::Token)
-                    .update_columns([fcm_token::Column::DeviceInfo, fcm_token::Column::UpdatedAt])
+                    .update_columns([
+                        fcm_token::Column::DeviceInfo,
+                        fcm_token::Column::UpdatedAt,
+                        fcm_token::Column::LastAccessTime,
+                    ])
                     .to_owned(),
             )
             .exec(&txn)
