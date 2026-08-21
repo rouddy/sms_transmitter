@@ -36,13 +36,8 @@ object PhoneNumberResolver {
     }
 
     fun hasPhoneNumberPermission(context: Context): Boolean {
-        val hasReadPhoneNumbers = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_NUMBERS) ==
-            PackageManager.PERMISSION_GRANTED
-        val hasReadPhoneState =
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_NUMBERS) ==
                 PackageManager.PERMISSION_GRANTED
-        return hasReadPhoneNumbers && hasReadPhoneState
     }
 
     fun normalizePhoneNumber(raw: String?): String? {

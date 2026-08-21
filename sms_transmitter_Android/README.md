@@ -25,6 +25,6 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
 ## 사전 준비
 
 - `SEND_SMS` 권한 허용
-- 듀얼심 번호 자동 등록을 사용하려면 `READ_PHONE_STATE`, `READ_PHONE_NUMBERS` 권한 허용
+- 듀얼심 번호 자동 등록을 사용하려면 `READ_PHONE_NUMBERS` 권한 허용
 - Firebase Console에서 발급한 `google-services.json` 파일을 `app/google-services.json` 경로에 추가
 - Environment variable에 SMS_TRANSMITTER_BASE_URL와 SMS_TRANSMITTER_PORT를 설정(설정하지 않으면 ``http://{Build중인 pc의 ip}``, 54323으로 동작)
