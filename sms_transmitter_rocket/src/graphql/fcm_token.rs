@@ -2,7 +2,7 @@ use async_graphql::{ComplexObject, Context, InputObject, Object, Result, SimpleO
 use chrono::Local;
 use sea_orm::{
     sea_query::OnConflict, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Set, TransactionTrait,
+    QueryFilter, QueryOrder, Set, TransactionTrait, IntoActiveModel,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -130,19 +130,35 @@ impl FcmTokenMutation {
                 active_row.monthly_limit = Set(input_row.monthly_limit);
                 active_row.update(&txn).await?;
             } else {
-                phone_number::ActiveModel {
-                    id: Set(Uuid::new_v4()),
-                    fcm_token_id: Set(model.id),
-                    phone_number: Set(input_row.phone_number.clone()),
-                    daily_limit: Set(input_row.daily_limit),
-                    monthly_limit: Set(input_row.monthly_limit),
-                    daily_sent_count: Set(0),
-                    monthly_sent_count: Set(0),
-                    last_daily_reset: Set(today),
-                    last_monthly_reset: Set(today),
+                let other = phone_number::Entity::find()
+                    .filter(phone_number::Column::PhoneNumber.eq(input_row.phone_number.clone()))
+                    .one(&txn)
+                    .await?;
+                if let Some(other_row) = other {
+                    let mut active_row: phone_number::ActiveModel = other_row.into_active_model();
+                    active_row.fcm_token_id = Set(model.id);
+                    active_row.daily_limit = Set(input_row.daily_limit);
+                    active_row.monthly_limit = Set(input_row.monthly_limit);
+                    active_row.daily_sent_count = Set(0);
+                    active_row.monthly_sent_count = Set(0);
+                    active_row.last_daily_reset = Set(today);
+                    active_row.last_monthly_reset = Set(today);
+                    active_row.update(&txn).await?;
+                } else {
+                    phone_number::ActiveModel {
+                        id: Set(Uuid::new_v4()),
+                        fcm_token_id: Set(model.id),
+                        phone_number: Set(input_row.phone_number.clone()),
+                        daily_limit: Set(input_row.daily_limit),
+                        monthly_limit: Set(input_row.monthly_limit),
+                        daily_sent_count: Set(0),
+                        monthly_sent_count: Set(0),
+                        last_daily_reset: Set(today),
+                        last_monthly_reset: Set(today),
+                    }
+                    .insert(&txn)
+                    .await?;
                 }
-                .insert(&txn)
-                .await?;
             }
         }
 
