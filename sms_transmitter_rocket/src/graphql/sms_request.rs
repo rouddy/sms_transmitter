@@ -13,6 +13,8 @@ use uuid::Uuid;
 use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
 
+const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
+
 pub const STATUS_SENDING: &str = "Sending";
 pub const STATUS_SENT: &str = "Sent";
 pub const STATUS_FAILED: &str = "Failed";
@@ -106,6 +108,10 @@ impl SmsRequestMutation {
         let txn = db.begin().await.expect("Transaction begin error");
 
         let tokens = fcm_token::Entity::find()
+            .filter(
+                fcm_token::Column::LastAccessTime
+                    .gt(now - chrono::Duration::seconds(ACTIVE_TOKEN_SECS)),
+            )
             .all(&txn)
             .await
             .expect("Find Tokens Error");
@@ -244,6 +250,16 @@ impl SmsRequestMutation {
                     phone_number_model.increment_sent_counts(now.date());
                     let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
                     phone_number_active.update(&txn).await?;
+                }
+            }
+        }
+
+        if let Some(token_id) = request.assigned_token_id {
+            if let Ok(Some(token)) = fcm_token::Entity::find_by_id(token_id).one(&txn).await {
+                let mut token_active: fcm_token::ActiveModel = token.into();
+                token_active.last_access_time = Set(now);
+                if let Err(e) = token_active.update(&txn).await {
+                    tracing::error!("Failed to update last_access_time for token {token_id}: {e}");
                 }
             }
         }
