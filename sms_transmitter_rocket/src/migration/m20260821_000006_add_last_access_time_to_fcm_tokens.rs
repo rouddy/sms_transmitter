@@ -1,3 +1,4 @@
+use sea_orm::ConnectionTrait;
 use sea_orm_migration::prelude::*;
 
 pub struct Migration;
@@ -15,15 +16,23 @@ impl MigrationTrait for Migration {
             .alter_table(
                 Table::alter()
                     .table(FcmTokens::Table)
-                    .add_column(
-                        ColumnDef::new(FcmTokens::LastAccessTime)
-                            .date_time()
-                            .not_null()
-                            .default(Expr::current_timestamp()),
-                    )
+                    .add_column(ColumnDef::new(FcmTokens::LastAccessTime).date_time())
                     .to_owned(),
             )
-            .await
+            .await?;
+
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                UPDATE fcm_tokens
+                SET last_access_time = CURRENT_TIMESTAMP
+                WHERE last_access_time IS NULL;
+                "#,
+            )
+            .await?;
+
+        Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
