@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: sms-transmitter
-          image: roudy/sms_transmitter:0.2.0
+          image: roudy/sms_transmitter:0.2.1
           imagePullPolicy: Always
           ports:
             - name: http
