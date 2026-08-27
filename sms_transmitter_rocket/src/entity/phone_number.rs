@@ -110,3 +110,168 @@ impl Model {
         self.last_monthly_reset = today;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Model;
+    use chrono::NaiveDate;
+    use uuid::Uuid;
+
+    fn date(year: i32, month: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    }
+
+    fn model(
+        daily_limit: i32,
+        monthly_limit: i32,
+        daily_sent_count: i32,
+        monthly_sent_count: i32,
+        last_daily_reset: NaiveDate,
+        last_monthly_reset: NaiveDate,
+    ) -> Model {
+        Model {
+            id: Uuid::new_v4(),
+            fcm_token_id: Uuid::new_v4(),
+            phone_number: "01012345678".to_string(),
+            daily_limit,
+            monthly_limit,
+            daily_sent_count,
+            monthly_sent_count,
+            last_daily_reset,
+            last_monthly_reset,
+        }
+    }
+
+    #[test]
+    fn effective_daily_sent_count_is_zero_when_reset_is_before_today() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 5, 20, date(2026, 8, 26), date(2026, 8, 1));
+        assert_eq!(m.effective_daily_sent_count(today), 0);
+    }
+
+    #[test]
+    fn effective_daily_sent_count_matches_when_reset_is_today() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 5, 20, date(2026, 8, 27), date(2026, 8, 1));
+        assert_eq!(m.effective_daily_sent_count(today), 5);
+    }
+
+    #[test]
+    fn effective_monthly_sent_count_is_zero_for_previous_month() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 5, 70, date(2026, 8, 27), date(2026, 7, 15));
+        assert_eq!(m.effective_monthly_sent_count(today), 0);
+    }
+
+    #[test]
+    fn effective_monthly_sent_count_matches_for_same_month() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 5, 70, date(2026, 8, 27), date(2026, 8, 1));
+        assert_eq!(m.effective_monthly_sent_count(today), 70);
+    }
+
+    #[test]
+    fn daily_remaining_is_none_when_unlimited() {
+        let today = date(2026, 8, 27);
+        let m = model(0, 100, 0, 0, today, today);
+        assert_eq!(m.daily_remaining(today), None);
+    }
+
+    #[test]
+    fn daily_remaining_reflects_full_limit_after_reset() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 5, 20, date(2026, 8, 26), date(2026, 8, 1));
+        assert_eq!(m.daily_remaining(today), Some(10));
+    }
+
+    #[test]
+    fn daily_remaining_is_clamped_at_zero() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 15, 70, today, today);
+        assert_eq!(m.daily_remaining(today), Some(0));
+    }
+
+    #[test]
+    fn monthly_remaining_is_none_when_unlimited() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 0, 0, 0, today, today);
+        assert_eq!(m.monthly_remaining(today), None);
+    }
+
+    #[test]
+    fn monthly_remaining_subtracts_effective_count() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 0, 40, today, date(2026, 8, 1));
+        assert_eq!(m.monthly_remaining(today), Some(60));
+    }
+
+    #[test]
+    fn can_send_now_is_true_when_unlimited() {
+        let today = date(2026, 8, 27);
+        let m = model(0, 0, 0, 0, today, today);
+        assert!(m.can_send_now(today));
+    }
+
+    #[test]
+    fn can_send_now_is_false_when_daily_limit_reached() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 10, 0, today, date(2026, 8, 1));
+        assert!(!m.can_send_now(today));
+    }
+
+    #[test]
+    fn can_send_now_is_false_when_monthly_limit_reached() {
+        let today = date(2026, 8, 27);
+        let m = model(100, 10, 0, 10, today, date(2026, 8, 1));
+        assert!(!m.can_send_now(today));
+    }
+
+    #[test]
+    fn can_send_now_is_true_when_under_limits() {
+        let today = date(2026, 8, 27);
+        let m = model(10, 100, 3, 50, today, date(2026, 8, 1));
+        assert!(m.can_send_now(today));
+    }
+
+    #[test]
+    fn availability_score_is_zero_when_unlimited() {
+        let today = date(2026, 8, 27);
+        let m = model(0, 0, 0, 0, today, today);
+        assert_eq!(m.availability_score(today), 0.0);
+    }
+
+    #[test]
+    fn availability_score_prefers_more_remaining() {
+        let today = date(2026, 8, 27);
+        let more = model(10, 100, 0, 0, today, date(2026, 8, 1));
+        let less = model(10, 100, 9, 0, today, date(2026, 8, 1));
+        assert!(more.availability_score(today) > less.availability_score(today));
+    }
+
+    #[test]
+    fn increment_sent_counts_resets_daily_on_new_day() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 5, 20, date(2026, 8, 26), date(2026, 8, 1));
+        m.increment_sent_counts(today);
+        assert_eq!(m.daily_sent_count, 1);
+        assert_eq!(m.last_daily_reset, today);
+    }
+
+    #[test]
+    fn increment_sent_counts_resets_monthly_on_new_month() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 5, 70, today, date(2026, 7, 15));
+        m.increment_sent_counts(today);
+        assert_eq!(m.monthly_sent_count, 1);
+        assert_eq!(m.last_monthly_reset, today);
+    }
+
+    #[test]
+    fn increment_sent_counts_accumulates_within_same_period() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 5, 70, today, date(2026, 8, 1));
+        m.increment_sent_counts(today);
+        assert_eq!(m.daily_sent_count, 6);
+        assert_eq!(m.monthly_sent_count, 71);
+    }
+}

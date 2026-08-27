@@ -13,7 +13,6 @@
 
 | 우선순위 | 항목 | 영역 | 핵심 문제 |
 |---|---|---|---|
-| P0 | 핵심 도메인 로직 단위 테스트 부재 | Rocket | 쿼터/리셋 로직 무검증 |
 | P0 | FCM 등록 로직 3중 중복 | Android | MainActivity / SettingsActivity / Service |
 | P0 | 사용량 집계 로직 3중 중복 | Android | MainActivity / OverlayService / Service |
 | P0 | 콜백 응답 저장 로직 중복 | Rocket | `report_sms_result` 성공/실패 가지 |
@@ -32,18 +31,7 @@
 
 ## P0 — 높은 우선순위
 
-### 1. 핵심 도메인 로직 단위 테스트 부재 (Rocket)
-
-- **위치**: `sms_transmitter_rocket/src/entity/phone_number.rs` (쿼터/리셋 로직), 프로젝트 전체에 테스트 0건
-- **문제**:
-  - `effective_daily_sent_count` / `effective_monthly_sent_count` / `increment_sent_counts`의 리셋 경계(자정·월초) 로직은 이 서비스의 핵심 비즈니스 룰인데 **어떤 코드로도 검증되지 않습니다.** 리셋 시점 버그는 조용히 과금/차단 오동작으로 이어집니다.
-  - CLAUDE.md에도 "No test suite exists yet"로 명시되어 있습니다. 도메인 로직은 순수 함수라 테스트가 가장 쉬운 부분입니다.
-- **개선 방향**:
-  - `entity/phone_number.rs`의 순수 메서드들(`daily_remaining`, `monthly_remaining`, `can_send_now`, `availability_score`, `increment_sent_counts`)에 유닛 테스트를 추가합니다.
-  - 특히 `last_daily_reset`/`last_monthly_reset`이 "오늘"과 같거나 이전/이후일 때의 경계 케이스를 표 형태로 검증합니다.
-  - `Local::now()`에 의존해 "오늘"을 구하는 부분을 메서드 파라미터(`today: NaiveDate`)로 주입받도록 리팩토링하면 테스트 가능성이 크게 올라갑니다 (아래 6번과 연결).
-
-### 3. FCM 등록 로직 3중 중복 (Android)
+### 1. FCM 등록 로직 3중 중복 (Android)
 
 - **위치**:
   - `MainActivity.kt` `registerFcmTokenWithServer` (224~251행)
