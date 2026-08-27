@@ -3,7 +3,6 @@ package com.rouddy.smstransmitter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
@@ -17,10 +16,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import com.google.firebase.messaging.FirebaseMessaging
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -122,32 +118,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun registerFcmTokenWithServer() {
         smsLimitSettings.initializePhoneNumbersIfNeeded(this)
-        val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
-
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                Log.w(TAG, "Failed to get FCM token.", task.exception)
-                return@addOnCompleteListener
-            }
-            val token = task.result ?: return@addOnCompleteListener
-            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-            val config = smsLimitSettings.getConfig()
-            val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
-                token = token,
-                deviceInfo = deviceInfo,
-                phoneNumbers = config.phoneNumbers,
-            )
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { Log.i(TAG, "FCM token registered with server from MainActivity.") },
-                    {
-                        Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
-                        Toast.makeText(this@MainActivity, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
-                    },
-                )
-            disposables.add(disposable)
-        }
+        FcmTokenRegistrar(this, disposables) {
+            Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
+            Toast.makeText(this, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
+        }.register()
     }
 
     private fun renderHistory() {

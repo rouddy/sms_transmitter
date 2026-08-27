@@ -13,7 +13,6 @@
 
 | 우선순위 | 항목 | 영역 | 핵심 문제 |
 |---|---|---|---|
-| P0 | FCM 등록 로직 3중 중복 | Android | MainActivity / SettingsActivity / Service |
 | P0 | 사용량 집계 로직 3중 중복 | Android | MainActivity / OverlayService / Service |
 | P0 | 콜백 응답 저장 로직 중복 | Rocket | `report_sms_result` 성공/실패 가지 |
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
@@ -31,22 +30,7 @@
 
 ## P0 — 높은 우선순위
 
-### 1. FCM 등록 로직 3중 중복 (Android)
-
-- **위치**:
-  - `MainActivity.kt` `registerFcmTokenWithServer` (224~251행)
-  - `SettingsActivity.kt` `registerFcmTokenWithServer` (226~256행)
-  - `FirebaseMessageReceiverService.kt` `onNewToken` (23~42행)
-- **문제**:
-  - "FCM 토큰 조회 → `deviceInfo` 생성 → `GraphQlClient.registerFcmToken` → RxJava 스케줄러 → 성공/실패 로그" 흐름이 세 곳에 거의 동일하게 복붙되어 있습니다.
-  - `deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"`도 세 번 중복, `SmsLimitSettings` 생성·`getConfig()`·`initializePhoneNumbersIfNeeded` 호출도 반복됩니다.
-  - 한 곳(예: 등록 실패 시 토스트·재시도 정책)이 바뀌면 세 곳을 모두 고쳐야 하는 위험이 있습니다.
-- **개선 방향**:
-  - `FcmTokenRegistrar`(또는 `FcmRegistrationManager`) 같은 단일 클래스를 만들어 `fun register(context)` 하나로 통합하고, 세 호출부는 이걸 위임하도록 바꿉니다.
-  - `deviceInfo` 생성도 이 클래스(또는 공용 상수/헬퍼)로 이동합니다.
-  - 이때 "등록 성공 시 서버가 반환한 token id를 저장"하는 로직도 함께 두면, 현재 `deleteFcmTokenByToken`이 `fcmTokens` 전체 조회로 id를 역추적하는 구조를 개선할 수 있습니다.
-
-### 4. 사용량 집계·포맷 로직 3중 중복 (Android)
+### 1. 사용량 집계·포맷 로직 3중 중복 (Android)
 
 - **위치**:
   - `MainActivity.kt` `renderRemainingCounts` (170~210행) + `formatUsageLine` (212~224행)
