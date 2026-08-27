@@ -103,6 +103,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun saveValues() {
+        val previousServerUrl = smsLimitSettings.getConfig().serverUrl
         val phoneNumberConfigs = collectPhoneNumberConfigs(showValidationError = true) ?: return
 
         val requestedOverlayEnabled = overlaySwitch.isChecked
@@ -132,11 +133,11 @@ class SettingsActivity : AppCompatActivity() {
             }
         if (serverUrl?.isEmpty() == true) {
             smsLimitSettings.removeServerUrl()
-        } else if (serverUrl?.equals(smsLimitSettings.getConfig().serverUrl) == false) {
+        } else if (serverUrl != null && serverUrl != previousServerUrl) {
             smsLimitSettings.saveServerUrl(serverUrl)
         }
         applyOverlayState(shouldEnableOverlay)
-        registerFcmTokenWithServer()
+        registerFcmTokenWithServer(previousServerUrl)
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
@@ -221,7 +222,7 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun registerFcmTokenWithServer() {
+    private fun registerFcmTokenWithServer(previousServerUrl: String? = null) {
         val config = smsLimitSettings.getConfig()
         val serverUrl = config.serverUrl ?: return
 
@@ -231,6 +232,9 @@ class SettingsActivity : AppCompatActivity() {
                 return@addOnCompleteListener
             }
             val token = task.result ?: return@addOnCompleteListener
+            if (previousServerUrl != null && previousServerUrl != serverUrl) {
+                deleteFcmTokenFromServer(previousServerUrl, token)
+            }
             val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
             GraphQlClient("$serverUrl/").registerFcmToken(
                 token = token,
@@ -248,6 +252,17 @@ class SettingsActivity : AppCompatActivity() {
                 )
                 .also { disposables.add(it) }
         }
+    }
+
+    private fun deleteFcmTokenFromServer(serverUrl: String, token: String) {
+        GraphQlClient("$serverUrl/").deleteFcmTokenByToken(token)
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                { Log.i(TAG, "FCM token deleted from previous server: $serverUrl") },
+                { Log.w(TAG, "Failed to delete FCM token from previous server (ignored): $serverUrl", it) },
+            )
+            .also { disposables.add(it) }
     }
 
     private fun syncPhoneNumberLimitInputs(
