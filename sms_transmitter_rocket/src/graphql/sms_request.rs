@@ -96,16 +96,12 @@ impl SmsRequestMutation {
         &self,
         ctx: &Context<'_>,
         input: RequestSmsInput,
-    ) -> Result<SmsRequest, String> {
-        let db = ctx
-            .data::<DatabaseConnection>()
-            .expect("Load Database Error");
-        let firebase = ctx
-            .data::<std::sync::Arc<FirebaseClient>>()
-            .expect("Load Firebase client Error");
+    ) -> Result<SmsRequest> {
+        let db = ctx.data::<DatabaseConnection>()?;
+        let firebase = ctx.data::<std::sync::Arc<FirebaseClient>>()?;
         let now = Local::now().naive_local();
 
-        let txn = db.begin().await.expect("Transaction begin error");
+        let txn = db.begin().await?;
 
         let tokens = fcm_token::Entity::find()
             .filter(
@@ -113,8 +109,7 @@ impl SmsRequestMutation {
                     .gt(now - chrono::Duration::seconds(ACTIVE_TOKEN_SECS)),
             )
             .all(&txn)
-            .await
-            .expect("Find Tokens Error");
+            .await?;
         let token_by_id = tokens
             .iter()
             .map(|token| (token.id, token.clone()))
@@ -123,8 +118,7 @@ impl SmsRequestMutation {
         let phone_numbers = phone_number::Entity::find()
             .filter(phone_number::Column::FcmTokenId.is_in(token_ids))
             .all(&txn)
-            .await
-            .expect("Find Phone Numbers Error");
+            .await?;
 
         let selected = phone_numbers
             .iter()
@@ -142,7 +136,7 @@ impl SmsRequestMutation {
             });
 
         if selected.is_none() {
-            return Err("남은 sms 쿼터가 없습니다.".to_string());
+            return Err(async_graphql::Error::new("남은 sms 쿼터가 없습니다."));
         }
 
         let request_id = Uuid::new_v4();
@@ -167,8 +161,8 @@ impl SmsRequestMutation {
             updated_at: Set(now),
         };
 
-        let sms_model = sms_active.insert(&txn).await.expect("Sms Insert Error");
-        txn.commit().await.expect("Transaction commit error");
+        let sms_model = sms_active.insert(&txn).await?;
+        txn.commit().await?;
 
         let firebase = firebase.clone();
         let phone_number = input.phone_number.clone();
