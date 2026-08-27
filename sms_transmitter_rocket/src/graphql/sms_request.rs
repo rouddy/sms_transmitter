@@ -13,6 +13,8 @@ use uuid::Uuid;
 use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
 
+const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
+
 pub const STATUS_SENDING: &str = "Sending";
 pub const STATUS_SENT: &str = "Sent";
 pub const STATUS_FAILED: &str = "Failed";
@@ -94,21 +96,21 @@ impl SmsRequestMutation {
         &self,
         ctx: &Context<'_>,
         input: RequestSmsInput,
-    ) -> Result<SmsRequest, String> {
-        let db = ctx
-            .data::<DatabaseConnection>()
-            .expect("Load Database Error");
-        let firebase = ctx
-            .data::<std::sync::Arc<FirebaseClient>>()
-            .expect("Load Firebase client Error");
+    ) -> Result<SmsRequest> {
+        let db = ctx.data::<DatabaseConnection>()?;
+        let firebase = ctx.data::<std::sync::Arc<FirebaseClient>>()?;
         let now = Local::now().naive_local();
+        let today = now.date();
 
-        let txn = db.begin().await.expect("Transaction begin error");
+        let txn = db.begin().await?;
 
         let tokens = fcm_token::Entity::find()
+            .filter(
+                fcm_token::Column::LastAccessTime
+                    .gt(now - chrono::Duration::seconds(ACTIVE_TOKEN_SECS)),
+            )
             .all(&txn)
-            .await
-            .expect("Find Tokens Error");
+            .await?;
         let token_by_id = tokens
             .iter()
             .map(|token| (token.id, token.clone()))
@@ -117,12 +119,11 @@ impl SmsRequestMutation {
         let phone_numbers = phone_number::Entity::find()
             .filter(phone_number::Column::FcmTokenId.is_in(token_ids))
             .all(&txn)
-            .await
-            .expect("Find Phone Numbers Error");
+            .await?;
 
         let selected = phone_numbers
             .iter()
-            .filter(|phone_number| phone_number.can_send_now())
+            .filter(|phone_number| phone_number.can_send_now(today))
             .filter_map(|phone_number| {
                 token_by_id
                     .get(&phone_number.fcm_token_id)
@@ -130,13 +131,13 @@ impl SmsRequestMutation {
                     .map(|token| (phone_number.clone(), token))
             })
             .max_by(|(a, _), (b, _)| {
-                a.availability_score()
-                    .partial_cmp(&b.availability_score())
+                a.availability_score(today)
+                    .partial_cmp(&b.availability_score(today))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
         if selected.is_none() {
-            return Err("남은 sms 쿼터가 없습니다.".to_string());
+            return Err(async_graphql::Error::new("남은 sms 쿼터가 없습니다."));
         }
 
         let request_id = Uuid::new_v4();
@@ -161,8 +162,8 @@ impl SmsRequestMutation {
             updated_at: Set(now),
         };
 
-        let sms_model = sms_active.insert(&txn).await.expect("Sms Insert Error");
-        txn.commit().await.expect("Transaction commit error");
+        let sms_model = sms_active.insert(&txn).await?;
+        txn.commit().await?;
 
         let firebase = firebase.clone();
         let phone_number = input.phone_number.clone();
@@ -248,6 +249,16 @@ impl SmsRequestMutation {
             }
         }
 
+        if let Some(token_id) = request.assigned_token_id {
+            if let Ok(Some(token)) = fcm_token::Entity::find_by_id(token_id).one(&txn).await {
+                let mut token_active: fcm_token::ActiveModel = token.into();
+                token_active.last_access_time = Set(now);
+                if let Err(e) = token_active.update(&txn).await {
+                    tracing::error!("Failed to update last_access_time for token {token_id}: {e}");
+                }
+            }
+        }
+
         let callback_url = request.callback_url.clone();
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
@@ -265,36 +276,7 @@ impl SmsRequestMutation {
         if let Some(callback_url) = callback_url {
             match invoke_callback_url(&callback_url).await {
                 Ok(response) => {
-                    match sms_request::Entity::find_by_id(request_id).one(db).await {
-                        Ok(Some(req)) => {
-                            let mut callback_active: sms_request::ActiveModel = req.into();
-                            callback_active.callback_response_code =
-                                Set(Some(response.status_code));
-                            callback_active.callback_response_body = Set(Some(response.body));
-                            callback_active.updated_at = Set(Local::now().naive_local());
-                            if let Err(e) = callback_active.update(db).await {
-                                tracing::error!(
-                                    "Failed to save callback response for request {:?}: {}",
-                                    input.request_id,
-                                    e
-                                );
-                            }
-                        }
-                        Ok(None) => {
-                            tracing::error!(
-                                "SMS request not found while saving callback response: {:?}",
-                                input.request_id
-                            );
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to load SMS request while saving callback response for request {:?}: {}",
-                                input.request_id,
-                                e
-                            );
-                        }
-                    }
-
+                    save_callback_response(db, request_id, response.status_code, response.body).await;
                     if !response.is_success {
                         tracing::error!(
                             "Callback URL returned non-success status for request {:?}: {}",
@@ -304,35 +286,7 @@ impl SmsRequestMutation {
                     }
                 }
                 Err(e) => {
-                    match sms_request::Entity::find_by_id(request_id).one(db).await {
-                        Ok(Some(req)) => {
-                            let mut callback_active: sms_request::ActiveModel = req.into();
-                            callback_active.callback_response_code = Set(Some(-1));
-                            callback_active.callback_response_body = Set(Some(e.clone()));
-                            callback_active.updated_at = Set(Local::now().naive_local());
-                            if let Err(save_err) = callback_active.update(db).await {
-                                tracing::error!(
-                                    "Failed to save callback error response for request {:?}: {}",
-                                    input.request_id,
-                                    save_err
-                                );
-                            }
-                        }
-                        Ok(None) => {
-                            tracing::error!(
-                                "SMS request not found while saving callback error response: {:?}",
-                                input.request_id
-                            );
-                        }
-                        Err(load_err) => {
-                            tracing::error!(
-                                "Failed to load SMS request while saving callback error response for request {:?}: {}",
-                                input.request_id,
-                                load_err
-                            );
-                        }
-                    }
-
+                    save_callback_response(db, request_id, -1, e.clone()).await;
                     tracing::error!(
                         "Failed to call callback URL for request {:?}: {}",
                         input.request_id,
@@ -343,6 +297,31 @@ impl SmsRequestMutation {
         }
 
         Ok(true)
+    }
+}
+
+async fn save_callback_response(
+    db: &DatabaseConnection,
+    request_id: Uuid,
+    status_code: i32,
+    body: String,
+) {
+    match sms_request::Entity::find_by_id(request_id).one(db).await {
+        Ok(Some(req)) => {
+            let mut callback_active: sms_request::ActiveModel = req.into();
+            callback_active.callback_response_code = Set(Some(status_code));
+            callback_active.callback_response_body = Set(Some(body));
+            callback_active.updated_at = Set(Local::now().naive_local());
+            if let Err(e) = callback_active.update(db).await {
+                tracing::error!("Failed to save callback response for request {request_id}: {e}");
+            }
+        }
+        Ok(None) => {
+            tracing::error!("SMS request not found while saving callback response: {request_id}");
+        }
+        Err(e) => {
+            tracing::error!("Failed to load SMS request while saving callback response for request {request_id}: {e}");
+        }
     }
 }
 

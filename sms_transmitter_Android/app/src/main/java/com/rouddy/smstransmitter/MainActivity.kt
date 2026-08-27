@@ -3,28 +3,31 @@ package com.rouddy.smstransmitter
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.google.firebase.messaging.FirebaseMessaging
-import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
     private lateinit var usageSummaryView: TextView
-    private lateinit var historyContentView: TextView
+    private lateinit var historyRecyclerView: RecyclerView
+    private lateinit var emptyHistoryView: View
+    private lateinit var swipeRefreshLayout: SwipeRefreshLayout
+    private lateinit var historyAdapter: SmsHistoryAdapter
+
     private lateinit var smsHistoryDb: SmsHistoryDatabase
     private lateinit var smsLimitSettings: SmsLimitSettings
     private val disposables = CompositeDisposable()
@@ -56,7 +59,16 @@ class MainActivity : AppCompatActivity() {
         smsLimitSettings = SmsLimitSettings(this)
         smsHistoryDb = SmsHistoryDatabase(this)
         usageSummaryView = findViewById(R.id.usage_summary_content)
-        historyContentView = findViewById(R.id.history_content)
+        historyRecyclerView = findViewById(R.id.history_recycler_view)
+        emptyHistoryView = findViewById(R.id.empty_history_view)
+        swipeRefreshLayout = findViewById(R.id.swipe_refresh_layout)
+
+        historyAdapter = SmsHistoryAdapter(historyDateFormatter)
+        historyRecyclerView.adapter = historyAdapter
+
+        swipeRefreshLayout.setOnRefreshListener {
+            renderHistory()
+        }
 
         ensureSmsPermission()
         registerFcmTokenWithServer()
@@ -106,59 +118,27 @@ class MainActivity : AppCompatActivity() {
 
     private fun registerFcmTokenWithServer() {
         smsLimitSettings.initializePhoneNumbersIfNeeded(this)
-        val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
-
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                Log.w(TAG, "Failed to get FCM token.", task.exception)
-                return@addOnCompleteListener
-            }
-            val token = task.result ?: return@addOnCompleteListener
-            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-            val config = smsLimitSettings.getConfig()
-            val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
-                token = token,
-                deviceInfo = deviceInfo,
-                phoneNumbers = config.phoneNumbers,
-            )
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { Log.i(TAG, "FCM token registered with server from MainActivity.") },
-                    {
-                        Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
-                        Toast.makeText(this@MainActivity, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
-                    },
-                )
-            disposables.add(disposable)
-        }
+        FcmTokenRegistrar(this, disposables) {
+            Log.e(TAG, "Failed to register FCM token with server from MainActivity.", it)
+            Toast.makeText(this, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
+        }.register()
     }
 
     private fun renderHistory() {
         renderRemainingCounts()
 
         val histories = smsHistoryDb.getRecentSmsHistories()
+        swipeRefreshLayout.isRefreshing = false
+
         if (histories.isEmpty()) {
-            historyContentView.text = getString(R.string.no_history)
+            historyRecyclerView.visibility = View.GONE
+            emptyHistoryView.visibility = View.VISIBLE
             return
         }
 
-        val content = histories.joinToString(separator = "\n\n") { item ->
-            val smsStatus = if (item.smsSuccess) {
-                getString(R.string.sms_success)
-            } else {
-                getString(R.string.sms_failure)
-            }
-            buildString {
-                append("시간: ${historyDateFormatter.format(Date(item.createdAtMillis))}\n")
-                append("${getString(R.string.sender_phone_number_label)}: ${item.senderPhoneNumber ?: "-"}\n")
-                append("수신번호: ${item.phoneNumber}\n")
-                append("메시지: ${item.message}\n")
-                append("SMS: $smsStatus")
-                if (!item.smsError.isNullOrBlank()) append(" (${item.smsError})")
-            }
-        }
-        historyContentView.text = content
+        historyRecyclerView.visibility = View.VISIBLE
+        emptyHistoryView.visibility = View.GONE
+        historyAdapter.submitList(histories)
     }
 
     private fun renderRemainingCounts() {
@@ -170,51 +150,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         val summary = config.phoneNumbers.joinToString(separator = "\n\n") { phoneConfig ->
-            val todaySentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
-                phoneConfig.phoneNumber,
-                SmsLimitSettings.getStartOfTodayMillis(now),
-                SmsLimitSettings.getStartOfNextDayMillis(now)
-            )
-            val monthSentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
-                phoneConfig.phoneNumber,
-                SmsLimitSettings.getStartOfMonthMillis(now),
-                SmsLimitSettings.getStartOfNextMonthMillis(now)
-            )
+            val todaySentCount = SmsUsageCalculator.sentToday(smsHistoryDb, phoneConfig.phoneNumber, now)
+            val monthSentCount = SmsUsageCalculator.sentThisMonth(smsHistoryDb, phoneConfig.phoneNumber, now)
             buildString {
                 append(getString(R.string.phone_number_usage_header, phoneConfig.phoneNumber))
                 append('\n')
                 append(
-                    formatUsageLine(
-                        periodLabel = getString(R.string.period_daily),
-                        limit = phoneConfig.dailyLimit,
-                        sentCount = todaySentCount
+                    SmsUsageCalculator.formatUsageLine(
+                        this@MainActivity,
+                        getString(R.string.period_daily),
+                        phoneConfig.dailyLimit,
+                        todaySentCount,
                     )
                 )
                 append('\n')
                 append(
-                    formatUsageLine(
-                        periodLabel = getString(R.string.period_monthly),
-                        limit = phoneConfig.monthlyLimit,
-                        sentCount = monthSentCount
+                    SmsUsageCalculator.formatUsageLine(
+                        this@MainActivity,
+                        getString(R.string.period_monthly),
+                        phoneConfig.monthlyLimit,
+                        monthSentCount,
                     )
                 )
             }
         }
         usageSummaryView.text = summary
-    }
-
-    private fun formatUsageLine(periodLabel: String, limit: Int?, sentCount: Int): String {
-        return if (limit != null && limit > 0) {
-            getString(
-                R.string.sms_usage_with_limit,
-                periodLabel,
-                sentCount,
-                limit,
-                (limit - sentCount).coerceAtLeast(0)
-            )
-        } else {
-            getString(R.string.sms_usage_unlimited, periodLabel, sentCount)
-        }
     }
 
     private fun refreshOverlayUi() {

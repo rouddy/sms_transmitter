@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sms-transmitter-db
+  namespace: sms-transmitter
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName 미지정 시 클러스터 기본 StorageClass를 사용한다.
+  # 기본 StorageClass가 없다면 여기에 명시적으로 지정할 것.

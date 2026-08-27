@@ -90,45 +90,25 @@ class UsageOverlayService : Service() {
                         append(phoneConfig.phoneNumber)
                         append('\n')
                         append(
-                            formatUsageLine(
-                                periodLabel = getString(R.string.period_daily),
-                                limit = phoneConfig.dailyLimit,
-                                sentCount = smsHistoryDatabase.countSuccessfulSmsBetweenForSender(
-                                    phoneConfig.phoneNumber,
-                                    SmsLimitSettings.getStartOfTodayMillis(now),
-                                    SmsLimitSettings.getStartOfNextDayMillis(now)
-                                )
+                            SmsUsageCalculator.formatUsageLine(
+                                this@UsageOverlayService,
+                                getString(R.string.period_daily),
+                                phoneConfig.dailyLimit,
+                                SmsUsageCalculator.sentToday(smsHistoryDatabase, phoneConfig.phoneNumber, now),
                             )
                         )
                         append('\n')
                         append(
-                            formatUsageLine(
-                                periodLabel = getString(R.string.period_monthly),
-                                limit = phoneConfig.monthlyLimit,
-                                sentCount = smsHistoryDatabase.countSuccessfulSmsBetweenForSender(
-                                    phoneConfig.phoneNumber,
-                                    SmsLimitSettings.getStartOfMonthMillis(now),
-                                    SmsLimitSettings.getStartOfNextMonthMillis(now)
-                                )
+                            SmsUsageCalculator.formatUsageLine(
+                                this@UsageOverlayService,
+                                getString(R.string.period_monthly),
+                                phoneConfig.monthlyLimit,
+                                SmsUsageCalculator.sentThisMonth(smsHistoryDatabase, phoneConfig.phoneNumber, now),
                             )
                         )
                     }
                 }
             )
-        }
-    }
-
-    private fun formatUsageLine(periodLabel: String, limit: Int?, sentCount: Int): String {
-        return if (limit != null && limit > 0) {
-            getString(
-                R.string.sms_usage_with_limit,
-                periodLabel,
-                sentCount,
-                limit,
-                (limit - sentCount).coerceAtLeast(0)
-            )
-        } else {
-            getString(R.string.sms_usage_unlimited, periodLabel, sentCount)
         }
     }
 

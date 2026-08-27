@@ -2,7 +2,7 @@ use async_graphql::{ComplexObject, Context, InputObject, Object, Result, SimpleO
 use chrono::Local;
 use sea_orm::{
     sea_query::OnConflict, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Set, TransactionTrait,
+    QueryFilter, QueryOrder, Set, TransactionTrait, IntoActiveModel,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -18,6 +18,7 @@ pub struct FcmToken {
     pub device_info: String,
     pub created_at: String,
     pub updated_at: String,
+    pub last_access_time: String,
 }
 
 #[ComplexObject]
@@ -42,6 +43,7 @@ impl From<fcm_token::Model> for FcmToken {
             device_info: model.device_info,
             created_at: model.created_at.to_string(),
             updated_at: model.updated_at.to_string(),
+            last_access_time: model.last_access_time.to_string(),
         }
     }
 }
@@ -84,12 +86,17 @@ impl FcmTokenMutation {
             device_info: Set(input.device_info),
             created_at: Set(now),
             updated_at: Set(now),
+            last_access_time: Set(now),
         };
 
         fcm_token::Entity::insert(active)
             .on_conflict(
                 OnConflict::column(fcm_token::Column::Token)
-                    .update_columns([fcm_token::Column::DeviceInfo, fcm_token::Column::UpdatedAt])
+                    .update_columns([
+                        fcm_token::Column::DeviceInfo,
+                        fcm_token::Column::UpdatedAt,
+                        fcm_token::Column::LastAccessTime,
+                    ])
                     .to_owned(),
             )
             .exec(&txn)
@@ -130,19 +137,35 @@ impl FcmTokenMutation {
                 active_row.monthly_limit = Set(input_row.monthly_limit);
                 active_row.update(&txn).await?;
             } else {
-                phone_number::ActiveModel {
-                    id: Set(Uuid::new_v4()),
-                    fcm_token_id: Set(model.id),
-                    phone_number: Set(input_row.phone_number.clone()),
-                    daily_limit: Set(input_row.daily_limit),
-                    monthly_limit: Set(input_row.monthly_limit),
-                    daily_sent_count: Set(0),
-                    monthly_sent_count: Set(0),
-                    last_daily_reset: Set(today),
-                    last_monthly_reset: Set(today),
+                let other = phone_number::Entity::find()
+                    .filter(phone_number::Column::PhoneNumber.eq(input_row.phone_number.clone()))
+                    .one(&txn)
+                    .await?;
+                if let Some(other_row) = other {
+                    let mut active_row: phone_number::ActiveModel = other_row.into_active_model();
+                    active_row.fcm_token_id = Set(model.id);
+                    active_row.daily_limit = Set(input_row.daily_limit);
+                    active_row.monthly_limit = Set(input_row.monthly_limit);
+                    active_row.daily_sent_count = Set(0);
+                    active_row.monthly_sent_count = Set(0);
+                    active_row.last_daily_reset = Set(today);
+                    active_row.last_monthly_reset = Set(today);
+                    active_row.update(&txn).await?;
+                } else {
+                    phone_number::ActiveModel {
+                        id: Set(Uuid::new_v4()),
+                        fcm_token_id: Set(model.id),
+                        phone_number: Set(input_row.phone_number.clone()),
+                        daily_limit: Set(input_row.daily_limit),
+                        monthly_limit: Set(input_row.monthly_limit),
+                        daily_sent_count: Set(0),
+                        monthly_sent_count: Set(0),
+                        last_daily_reset: Set(today),
+                        last_monthly_reset: Set(today),
+                    }
+                    .insert(&txn)
+                    .await?;
                 }
-                .insert(&txn)
-                .await?;
             }
         }
 

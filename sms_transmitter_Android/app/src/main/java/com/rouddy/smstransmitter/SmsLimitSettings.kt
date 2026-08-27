@@ -4,7 +4,6 @@ import android.content.Context
 import com.rouddy.smstransmitter.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Calendar
 
 data class PhoneNumberLimitConfig(
     val phoneNumber: String,
@@ -194,44 +193,5 @@ class SmsLimitSettings(context: Context) {
         private const val KEY_OVERLAY_POS_X = "overlay_pos_x"
         private const val KEY_OVERLAY_POS_Y = "overlay_pos_y"
         private const val PHONE_NUMBER_SEPARATOR = '\n'
-
-        fun getStartOfTodayMillis(nowMillis: Long = System.currentTimeMillis()): Long {
-            val calendar = Calendar.getInstance().apply {
-                timeInMillis = nowMillis
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            return calendar.timeInMillis
-        }
-
-        fun getStartOfNextDayMillis(nowMillis: Long = System.currentTimeMillis()): Long {
-            val calendar = Calendar.getInstance().apply {
-                timeInMillis = getStartOfTodayMillis(nowMillis)
-                add(Calendar.DAY_OF_MONTH, 1)
-            }
-            return calendar.timeInMillis
-        }
-
-        fun getStartOfMonthMillis(nowMillis: Long = System.currentTimeMillis()): Long {
-            val calendar = Calendar.getInstance().apply {
-                timeInMillis = nowMillis
-                set(Calendar.DAY_OF_MONTH, 1)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            return calendar.timeInMillis
-        }
-
-        fun getStartOfNextMonthMillis(nowMillis: Long = System.currentTimeMillis()): Long {
-            val calendar = Calendar.getInstance().apply {
-                timeInMillis = getStartOfMonthMillis(nowMillis)
-                add(Calendar.MONTH, 1)
-            }
-            return calendar.timeInMillis
-        }
     }
 }

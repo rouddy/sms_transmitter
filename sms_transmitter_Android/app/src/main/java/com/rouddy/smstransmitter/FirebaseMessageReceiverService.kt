@@ -3,7 +3,6 @@ package com.rouddy.smstransmitter
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.telephony.PhoneNumberUtils
 import android.telephony.SmsManager
 import android.telephony.SubscriptionInfo
@@ -22,23 +21,8 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        val settings = SmsLimitSettings(applicationContext)
-        settings.initializePhoneNumbersIfNeeded(applicationContext)
-        val config = settings.getConfig()
-        val serverUrl = config.serverUrl ?: return
-
-        val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-        val disposable = GraphQlClient("$serverUrl/").registerFcmToken(
-            token = token,
-            deviceInfo = deviceInfo,
-            phoneNumbers = config.phoneNumbers,
-        )
-            .subscribeOn(Schedulers.io())
-            .subscribe(
-                { Log.i(TAG, "FCM token registered with server.") },
-                { Log.e(TAG, "Failed to register FCM token with server.", it) },
-            )
-        disposables.add(disposable)
+        SmsLimitSettings(applicationContext).initializePhoneNumbersIfNeeded(applicationContext)
+        FcmTokenRegistrar(applicationContext, disposables).registerToken(token)
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
@@ -139,31 +123,16 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     }
 
     private fun checkLimitReachedError(historyDb: SmsHistoryDatabase, payloadSenderPhoneNumber: String?): String? {
-        val settings = SmsLimitSettings(applicationContext).getConfig()
         val senderPhoneNumber = payloadSenderPhoneNumber ?: return null
-        val senderConfig = settings.phoneNumbers.firstOrNull { it.phoneNumber == senderPhoneNumber } ?: return null
+        val senderConfig = SmsLimitSettings(applicationContext).getConfig().phoneNumbers
+            .firstOrNull { it.phoneNumber == senderPhoneNumber } ?: return null
         val now = System.currentTimeMillis()
 
-        senderConfig.dailyLimit?.let { dailyLimit ->
-            val todaySentCount = historyDb.countSuccessfulSmsBetweenForSender(
-                senderPhoneNumber,
-                SmsLimitSettings.getStartOfTodayMillis(now),
-                SmsLimitSettings.getStartOfNextDayMillis(now)
-            )
-            if (todaySentCount >= dailyLimit) {
-                return getString(R.string.daily_limit_reached)
-            }
+        if (SmsUsageCalculator.isDailyLimitReached(historyDb, senderConfig, now)) {
+            return getString(R.string.daily_limit_reached)
         }
-
-        senderConfig.monthlyLimit?.let { monthlyLimit ->
-            val monthSentCount = historyDb.countSuccessfulSmsBetweenForSender(
-                senderPhoneNumber,
-                SmsLimitSettings.getStartOfMonthMillis(now),
-                SmsLimitSettings.getStartOfNextMonthMillis(now)
-            )
-            if (monthSentCount >= monthlyLimit) {
-                return getString(R.string.monthly_limit_reached)
-            }
+        if (SmsUsageCalculator.isMonthlyLimitReached(historyDb, senderConfig, now)) {
+            return getString(R.string.monthly_limit_reached)
         }
 
         return null

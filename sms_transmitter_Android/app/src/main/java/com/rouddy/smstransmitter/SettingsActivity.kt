@@ -2,7 +2,6 @@ package com.rouddy.smstransmitter
 
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.Editable
@@ -17,7 +16,6 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.switchmaterial.SwitchMaterial
-import com.google.firebase.messaging.FirebaseMessaging
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import io.reactivex.rxjava3.schedulers.Schedulers
@@ -103,6 +101,7 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun saveValues() {
+        val previousServerUrl = smsLimitSettings.getConfig().serverUrl
         val phoneNumberConfigs = collectPhoneNumberConfigs(showValidationError = true) ?: return
 
         val requestedOverlayEnabled = overlaySwitch.isChecked
@@ -132,11 +131,11 @@ class SettingsActivity : AppCompatActivity() {
             }
         if (serverUrl?.isEmpty() == true) {
             smsLimitSettings.removeServerUrl()
-        } else if (serverUrl?.equals(smsLimitSettings.getConfig().serverUrl) == false) {
+        } else if (serverUrl != null && serverUrl != previousServerUrl) {
             smsLimitSettings.saveServerUrl(serverUrl)
         }
         applyOverlayState(shouldEnableOverlay)
-        registerFcmTokenWithServer()
+        registerFcmTokenWithServer(previousServerUrl)
 
         Toast.makeText(this, R.string.settings_saved, Toast.LENGTH_SHORT).show()
         finish()
@@ -221,33 +220,30 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
-    private fun registerFcmTokenWithServer() {
-        val config = smsLimitSettings.getConfig()
-        val serverUrl = config.serverUrl ?: return
-
-        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-            if (!task.isSuccessful) {
-                Log.w(TAG, "Failed to get FCM token.", task.exception)
-                return@addOnCompleteListener
-            }
-            val token = task.result ?: return@addOnCompleteListener
-            val deviceInfo = "${Build.MANUFACTURER} ${Build.MODEL}"
-            GraphQlClient("$serverUrl/").registerFcmToken(
-                token = token,
-                deviceInfo = deviceInfo,
-                phoneNumbers = config.phoneNumbers,
-            )
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(
-                    { Log.i(TAG, "FCM token registered with server from SettingsActivity.") },
-                    {
-                        Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it)
-                        Toast.makeText(this@SettingsActivity, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
-                    },
-                )
-                .also { disposables.add(it) }
+    private fun registerFcmTokenWithServer(previousServerUrl: String? = null) {
+        val serverUrl = smsLimitSettings.getConfig().serverUrl ?: return
+        val registrar = FcmTokenRegistrar(this, disposables) {
+            Log.e(TAG, "Failed to register FCM token with server from SettingsActivity.", it)
+            Toast.makeText(this, R.string.server_connection_failed, Toast.LENGTH_SHORT).show()
         }
+
+        registrar.fetchToken { token ->
+            if (previousServerUrl != null && previousServerUrl != serverUrl) {
+                deleteFcmTokenFromServer(previousServerUrl, token)
+            }
+            registrar.registerToken(token)
+        }
+    }
+
+    private fun deleteFcmTokenFromServer(serverUrl: String, token: String) {
+        GraphQlClient("$serverUrl/").deleteFcmTokenByToken(token)
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                { Log.i(TAG, "FCM token deleted from previous server: $serverUrl") },
+                { Log.w(TAG, "Failed to delete FCM token from previous server (ignored): $serverUrl", it) },
+            )
+            .also { disposables.add(it) }
     }
 
     private fun syncPhoneNumberLimitInputs(

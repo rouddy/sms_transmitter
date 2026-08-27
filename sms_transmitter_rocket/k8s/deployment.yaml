@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sms-transmitter
+  namespace: sms-transmitter
+  labels:
+    app: sms-transmitter
+spec:
+  replicas: 1
+  # SQLite는 단일 writer만 지원하고 PVC도 RWO라 롤링 업데이트 중
+  # 두 파드가 같은 볼륨에 붙는 상황을 피하려고 Recreate를 쓴다.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: sms-transmitter
+  template:
+    metadata:
+      labels:
+        app: sms-transmitter
+    spec:
+      containers:
+        - name: sms-transmitter
+          image: roudy/sms_transmitter:0.2.1
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 54323
+          env:
+            - name: DATABASE_URL
+              value: "sqlite:///app/db/sms_transmitter.db?mode=rwc"
+            - name: FIREBASE_CREDENTIALS_PATH
+              value: "/app/secrets/firebase-credentials.json"
+          volumeMounts:
+            - name: db
+              mountPath: /app/db
+            - name: firebase-credentials
+              mountPath: /app/secrets
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /graphiql
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /graphiql
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: sms-transmitter-db
+        - name: firebase-credentials
+          secret:
+            secretName: firebase-credentials

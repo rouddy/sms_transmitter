@@ -3,16 +3,12 @@ package com.rouddy.smstransmitter
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
 import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 
 object PhoneNumberResolver {
     fun getAvailablePhoneNumbers(context: Context): List<String> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) {
-            return emptyList()
-        }
         if (!hasPhoneNumberPermission(context)) {
             return emptyList()
         }
@@ -36,13 +32,8 @@ object PhoneNumberResolver {
     }
 
     fun hasPhoneNumberPermission(context: Context): Boolean {
-        val hasReadPhoneNumbers = Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_NUMBERS) ==
-            PackageManager.PERMISSION_GRANTED
-        val hasReadPhoneState =
-            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) ==
+        return ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_NUMBERS) ==
                 PackageManager.PERMISSION_GRANTED
-        return hasReadPhoneNumbers && hasReadPhoneState
     }
 
     fun normalizePhoneNumber(raw: String?): String? {
