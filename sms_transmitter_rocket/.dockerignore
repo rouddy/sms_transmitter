@@ -1,0 +1,16 @@
+# 빌드 산출물
+target/
+
+# 로컬 시크릿/데이터 — 공개 이미지에 포함되면 안 됨
+.env
+firebase-credentials.json
+*.db
+*.db-shm
+*.db-wal
+
+# 이미지 런타임에 불필요한 파일
+docker/
+k8s/
+.gitignore
+README.md
+CLAUDE.md

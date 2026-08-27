@@ -1,0 +1,5 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  # 참고: k8s 이름 규칙(RFC 1123)상 언더스코어(_)를 쓸 수 없어 sms-transmitter로 정함
+  name: sms-transmitter
