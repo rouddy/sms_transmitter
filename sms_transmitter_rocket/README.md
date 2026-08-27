@@ -224,5 +224,5 @@ query {
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `sqlite://sms_transmitter.db?mode=rwc` | SeaORM database URL |
+| `DATABASE_URL` | `sqlite://db/sms_transmitter.db?mode=rwc` | SeaORM database URL |
 | `FIREBASE_CREDENTIALS_PATH` | `firebase-credentials.json` | Path to Firebase service account JSON (project ID is read from this file) |
