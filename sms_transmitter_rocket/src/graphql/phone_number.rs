@@ -1,5 +1,5 @@
 use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use chrono::{Datelike, Local};
+use chrono::Local;
 use sea_orm::{DatabaseConnection, EntityTrait};
 
 use crate::entity::phone_number;
@@ -22,22 +22,10 @@ pub struct PhoneNumber {
 impl From<phone_number::Model> for PhoneNumber {
     fn from(model: phone_number::Model) -> Self {
         let today = Local::now().date_naive();
-        let daily_sent_count = if model.last_daily_reset < today {
-            0
-        } else {
-            model.daily_sent_count
-        };
-        let monthly_sent_count = if (
-            model.last_monthly_reset.year(),
-            model.last_monthly_reset.month(),
-        ) < (today.year(), today.month())
-        {
-            0
-        } else {
-            model.monthly_sent_count
-        };
-        let daily_remaining = model.daily_remaining();
-        let monthly_remaining = model.monthly_remaining();
+        let daily_sent_count = model.effective_daily_sent_count(today);
+        let monthly_sent_count = model.effective_monthly_sent_count(today);
+        let daily_remaining = model.daily_remaining(today);
+        let monthly_remaining = model.monthly_remaining(today);
         Self {
             id: ID(model.id.to_string()),
             fcm_token_id: ID(model.fcm_token_id.to_string()),

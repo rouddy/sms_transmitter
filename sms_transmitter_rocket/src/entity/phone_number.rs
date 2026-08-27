@@ -1,4 +1,4 @@
-use chrono::{Datelike, Local, NaiveDate};
+use chrono::{Datelike, NaiveDate};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,7 @@ impl Related<super::fcm_token::Entity> for Entity {
 impl ActiveModelBehavior for ActiveModel {}
 
 impl Model {
-    fn effective_daily_sent_count(&self, today: NaiveDate) -> i32 {
+    pub fn effective_daily_sent_count(&self, today: NaiveDate) -> i32 {
         if self.last_daily_reset < today {
             0
         } else {
@@ -45,7 +45,7 @@ impl Model {
         }
     }
 
-    fn effective_monthly_sent_count(&self, today: NaiveDate) -> i32 {
+    pub fn effective_monthly_sent_count(&self, today: NaiveDate) -> i32 {
         if (
             self.last_monthly_reset.year(),
             self.last_monthly_reset.month(),
@@ -57,38 +57,36 @@ impl Model {
         }
     }
 
-    pub fn daily_remaining(&self) -> Option<i32> {
+    pub fn daily_remaining(&self, today: NaiveDate) -> Option<i32> {
         if self.daily_limit == 0 {
             return None;
         }
-        let today = Local::now().date_naive();
         Some((self.daily_limit - self.effective_daily_sent_count(today)).max(0))
     }
 
-    pub fn monthly_remaining(&self) -> Option<i32> {
+    pub fn monthly_remaining(&self, today: NaiveDate) -> Option<i32> {
         if self.monthly_limit == 0 {
             return None;
         }
-        let today = Local::now().date_naive();
         Some((self.monthly_limit - self.effective_monthly_sent_count(today)).max(0))
     }
 
-    pub fn can_send_now(&self) -> bool {
-        self.daily_remaining()
+    pub fn can_send_now(&self, today: NaiveDate) -> bool {
+        self.daily_remaining(today)
             .map(|remaining| remaining > 0)
             .unwrap_or(true)
             && self
-                .monthly_remaining()
+                .monthly_remaining(today)
                 .map(|remaining| remaining > 0)
                 .unwrap_or(true)
     }
 
-    pub fn availability_score(&self) -> f32 {
-        let daily_ratio = match self.daily_remaining() {
+    pub fn availability_score(&self, today: NaiveDate) -> f32 {
+        let daily_ratio = match self.daily_remaining(today) {
             Some(remaining) => remaining as f32 / self.daily_limit as f32,
             None => 0.0,
         };
-        let monthly_ratio = match self.monthly_remaining() {
+        let monthly_ratio = match self.monthly_remaining(today) {
             Some(remaining) => remaining as f32 / self.monthly_limit as f32,
             None => 0.0,
         };

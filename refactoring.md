@@ -17,7 +17,6 @@
 | P0 | FCM 등록 로직 3중 중복 | Android | MainActivity / SettingsActivity / Service |
 | P0 | 사용량 집계 로직 3중 중복 | Android | MainActivity / OverlayService / Service |
 | P0 | 콜백 응답 저장 로직 중복 | Rocket | `report_sms_result` 성공/실패 가지 |
-| P0 | 유효 발신 카운트 로직 중복 | Rocket | `From` impl vs `Model` 메서드 |
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
 | P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
 | P1 | GraphQL 응답 `Map<String,Any?>` 캐스팅 | Android | 타입 안전성 부족 |
@@ -81,18 +80,6 @@
 - **개선 방향**:
   - `save_callback_response(db, request_id, status_code, body)` 헬퍼 하나로 추출하고, 성공/실패는 이 헬퍼에 다른 인자만 넘기도록 단순화합니다.
   - 콜백 발송·결과 저장을 별도 함수(`process_callback`)로 분리해 `report_sms_result` 본문이 "상태 업데이트 + (옵션) 콜백" 정도로 읽히게 합니다.
-
-### 6. 유효 발신 카운트 로직 중복 (Rocket)
-
-- **위치**:
-  - `sms_transmitter_rocket/src/entity/phone_number.rs` `effective_daily_sent_count`/`effective_monthly_sent_count` (40~58행)
-  - `sms_transmitter_rocket/src/graphql/phone_number.rs` `From<phone_number::Model>` (24~40행)
-- **문제**:
-  - `graphql/phone_number.rs`의 `From` impl이 "오늘보다 이전이면 0" 리셋 로직을 다시 손으로 구현하고 있습니다. `Model`에는 이미 같은 판단 로직(`effective_*_sent_count`)이 있는데, `From`에서는 이를 재사용하지 않고 중복 계산합니다.
-  - 두 곳이 각자 `Local::now().date_naive()`를 호출해 "오늘"을 구하고 있어 행 단위로 시각이 미세하게 어긋날 수 있습니다(비결정적).
-- **개선 방향**:
-  - `Model`에 `effective_daily_sent_count(today)` / `effective_monthly_sent_count(today)` 를 `pub`으로 노출하고, `From`에서는 `today`를 한 번만 구한 뒤 이를 넘겨 재사용합니다.
-  - 나아가 `From` 대신 생성자(또는 `Model::to_dto(today)`)로 바꿔 "오늘" 주입을 명시화하면 테스트도 쉬워집니다(2번과 연계).
 
 ---
 

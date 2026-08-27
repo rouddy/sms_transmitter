@@ -100,6 +100,7 @@ impl SmsRequestMutation {
         let db = ctx.data::<DatabaseConnection>()?;
         let firebase = ctx.data::<std::sync::Arc<FirebaseClient>>()?;
         let now = Local::now().naive_local();
+        let today = now.date();
 
         let txn = db.begin().await?;
 
@@ -122,7 +123,7 @@ impl SmsRequestMutation {
 
         let selected = phone_numbers
             .iter()
-            .filter(|phone_number| phone_number.can_send_now())
+            .filter(|phone_number| phone_number.can_send_now(today))
             .filter_map(|phone_number| {
                 token_by_id
                     .get(&phone_number.fcm_token_id)
@@ -130,8 +131,8 @@ impl SmsRequestMutation {
                     .map(|token| (phone_number.clone(), token))
             })
             .max_by(|(a, _), (b, _)| {
-                a.availability_score()
-                    .partial_cmp(&b.availability_score())
+                a.availability_score(today)
+                    .partial_cmp(&b.availability_score(today))
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
 
