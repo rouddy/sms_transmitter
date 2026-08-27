@@ -13,7 +13,6 @@
 
 | 우선순위 | 항목 | 영역 | 핵심 문제 |
 |---|---|---|---|
-| P0 | 사용량 집계 로직 3중 중복 | Android | MainActivity / OverlayService / Service |
 | P0 | 콜백 응답 저장 로직 중복 | Rocket | `report_sms_result` 성공/실패 가지 |
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
 | P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
@@ -30,21 +29,7 @@
 
 ## P0 — 높은 우선순위
 
-### 1. 사용량 집계·포맷 로직 3중 중복 (Android)
-
-- **위치**:
-  - `MainActivity.kt` `renderRemainingCounts` (170~210행) + `formatUsageLine` (212~224행)
-  - `UsageOverlayService.kt` `refreshOverlay` (69~119행) + `formatUsageLine` (121~133행)
-  - `FirebaseMessageReceiverService.kt` `checkLimitReachedError` (141~170행)
-- **문제**:
-  - "오늘/이번 달 시작·끝 millis 구하기 + `countSuccessfulSmsBetweenForSender` 호출 + 남은 수 계산 + `일간/월간` 문자열 포맷" 패턴이 세 곳에 중복되어 있습니다.
-  - `getStartOfTodayMillis` / `getStartOfNextDayMillis` / `getStartOfMonthMillis` / `getStartOfNextMonthMillis` 호출 조합도 계속 반복됩니다.
-- **개선 방향**:
-  - `SmsUsageCalculator`(또는 `SmsUsageTracker`) 같은 컴포넌트를 만들어 `PhoneNumberLimitConfig` → `(오늘 발신수, 이번달 발신수, 남은 수)`를 산출하는 단일 API(`usageFor(phoneNumber, now)`)를 제공합니다.
-  - `formatUsageLine`도 공용으로 옮기고, 세 호출부는 계산 결과를 받아 렌더링만 하도록 바꿉니다.
-  - 한도 도달 체크(`checkLimitReachedError`)도 이 계산기를 재사용하도록 정리합니다.
-
-### 5. 콜백 응답 저장 로직 중복 (Rocket)
+### 1. 콜백 응답 저장 로직 중복 (Rocket)
 
 - **위치**: `sms_transmitter_rocket/src/graphql/sms_request.rs` `report_sms_result` (281~359행)
 - **문제**:

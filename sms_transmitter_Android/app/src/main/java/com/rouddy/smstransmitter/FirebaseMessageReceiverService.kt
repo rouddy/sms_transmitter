@@ -123,31 +123,16 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     }
 
     private fun checkLimitReachedError(historyDb: SmsHistoryDatabase, payloadSenderPhoneNumber: String?): String? {
-        val settings = SmsLimitSettings(applicationContext).getConfig()
         val senderPhoneNumber = payloadSenderPhoneNumber ?: return null
-        val senderConfig = settings.phoneNumbers.firstOrNull { it.phoneNumber == senderPhoneNumber } ?: return null
+        val senderConfig = SmsLimitSettings(applicationContext).getConfig().phoneNumbers
+            .firstOrNull { it.phoneNumber == senderPhoneNumber } ?: return null
         val now = System.currentTimeMillis()
 
-        senderConfig.dailyLimit?.let { dailyLimit ->
-            val todaySentCount = historyDb.countSuccessfulSmsBetweenForSender(
-                senderPhoneNumber,
-                SmsLimitSettings.getStartOfTodayMillis(now),
-                SmsLimitSettings.getStartOfNextDayMillis(now)
-            )
-            if (todaySentCount >= dailyLimit) {
-                return getString(R.string.daily_limit_reached)
-            }
+        if (SmsUsageCalculator.isDailyLimitReached(historyDb, senderConfig, now)) {
+            return getString(R.string.daily_limit_reached)
         }
-
-        senderConfig.monthlyLimit?.let { monthlyLimit ->
-            val monthSentCount = historyDb.countSuccessfulSmsBetweenForSender(
-                senderPhoneNumber,
-                SmsLimitSettings.getStartOfMonthMillis(now),
-                SmsLimitSettings.getStartOfNextMonthMillis(now)
-            )
-            if (monthSentCount >= monthlyLimit) {
-                return getString(R.string.monthly_limit_reached)
-            }
+        if (SmsUsageCalculator.isMonthlyLimitReached(historyDb, senderConfig, now)) {
+            return getString(R.string.monthly_limit_reached)
         }
 
         return null

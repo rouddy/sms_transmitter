@@ -150,51 +150,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         val summary = config.phoneNumbers.joinToString(separator = "\n\n") { phoneConfig ->
-            val todaySentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
-                phoneConfig.phoneNumber,
-                SmsLimitSettings.getStartOfTodayMillis(now),
-                SmsLimitSettings.getStartOfNextDayMillis(now)
-            )
-            val monthSentCount = smsHistoryDb.countSuccessfulSmsBetweenForSender(
-                phoneConfig.phoneNumber,
-                SmsLimitSettings.getStartOfMonthMillis(now),
-                SmsLimitSettings.getStartOfNextMonthMillis(now)
-            )
+            val todaySentCount = SmsUsageCalculator.sentToday(smsHistoryDb, phoneConfig.phoneNumber, now)
+            val monthSentCount = SmsUsageCalculator.sentThisMonth(smsHistoryDb, phoneConfig.phoneNumber, now)
             buildString {
                 append(getString(R.string.phone_number_usage_header, phoneConfig.phoneNumber))
                 append('\n')
                 append(
-                    formatUsageLine(
-                        periodLabel = getString(R.string.period_daily),
-                        limit = phoneConfig.dailyLimit,
-                        sentCount = todaySentCount
+                    SmsUsageCalculator.formatUsageLine(
+                        this@MainActivity,
+                        getString(R.string.period_daily),
+                        phoneConfig.dailyLimit,
+                        todaySentCount,
                     )
                 )
                 append('\n')
                 append(
-                    formatUsageLine(
-                        periodLabel = getString(R.string.period_monthly),
-                        limit = phoneConfig.monthlyLimit,
-                        sentCount = monthSentCount
+                    SmsUsageCalculator.formatUsageLine(
+                        this@MainActivity,
+                        getString(R.string.period_monthly),
+                        phoneConfig.monthlyLimit,
+                        monthSentCount,
                     )
                 )
             }
         }
         usageSummaryView.text = summary
-    }
-
-    private fun formatUsageLine(periodLabel: String, limit: Int?, sentCount: Int): String {
-        return if (limit != null && limit > 0) {
-            getString(
-                R.string.sms_usage_with_limit,
-                periodLabel,
-                sentCount,
-                limit,
-                (limit - sentCount).coerceAtLeast(0)
-            )
-        } else {
-            getString(R.string.sms_usage_unlimited, periodLabel, sentCount)
-        }
     }
 
     private fun refreshOverlayUi() {
