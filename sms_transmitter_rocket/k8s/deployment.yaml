@@ -27,6 +27,12 @@ spec:
             - name: http
               containerPort: 54323
           env:
+            # 런타임 이미지에는 Rocket.toml이 없어(바이너리만 COPY) Rocket이
+            # 기본값 127.0.0.1:8000으로 바인딩된다. 환경변수로 명시해 준다.
+            - name: ROCKET_ADDRESS
+              value: "0.0.0.0"
+            - name: ROCKET_PORT
+              value: "54323"
             - name: DATABASE_URL
               value: "sqlite:///app/db/sms_transmitter.db?mode=rwc"
             - name: FIREBASE_CREDENTIALS_PATH
