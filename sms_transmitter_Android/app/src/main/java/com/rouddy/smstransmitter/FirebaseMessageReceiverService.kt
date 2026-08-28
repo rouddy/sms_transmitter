@@ -92,8 +92,9 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
     private fun getSmsManager(senderPhoneNumber: String): SmsManager {
         val subscriptionManager = getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
 
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED) {
-            throw IllegalArgumentException("READ_PHONE_NUMBERS permission not granted.")
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_NUMBERS) != PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+            throw IllegalArgumentException("READ_PHONE_NUMBERS or READ_PHONE_STATE permission not granted.")
         }
 
         val activeInfoList: List<SubscriptionInfo>? = subscriptionManager.activeSubscriptionInfoList
