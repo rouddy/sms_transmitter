@@ -1,17 +1,18 @@
 package com.rouddy.smstransmitter
 
-import android.util.Log
 import io.reactivex.rxjava3.core.Maybe
 import io.reactivex.rxjava3.core.Single
 
 /**
  * GraphQL HTTP client that communicates with the sms_transmitter_rocket server using Retrofit + RxJava3.
  */
-class GraphQlClient(private val serverUrl: String) {
+class GraphQlClient internal constructor(private val serviceProvider: () -> GraphQlApiService) {
 
-    private val service: GraphQlApiService by lazy {
+    constructor(serverUrl: String) : this({
         RetrofitClientProvider.create(serverUrl, GraphQlApiService::class.java)
-    }
+    })
+
+    private val service: GraphQlApiService by lazy(serviceProvider)
 
     /**
      * Registers or updates this device's FCM token on the server.
@@ -44,7 +45,14 @@ class GraphQlClient(private val serverUrl: String) {
             )
         )
 
-        return execute(mutation, variables)
+        return service.registerFcmToken(GraphQlRequest(mutation, variables))
+            .requireData()
+            .map { data ->
+                if (data.registerFcmToken?.id.isNullOrBlank()) {
+                    throw GraphQlException("Missing registerFcmToken.id in GraphQL response.")
+                }
+                Unit
+            }
     }
 
     /**
@@ -70,7 +78,14 @@ class GraphQlClient(private val serverUrl: String) {
 
         val variables = mapOf("input" to inputMap)
 
-        return execute(mutation, variables)
+        return service.reportSmsResult(GraphQlRequest(mutation, variables))
+            .requireData()
+            .map { data ->
+                if (data.reportSmsResult == null) {
+                    throw GraphQlException("Missing reportSmsResult in GraphQL response.")
+                }
+                Unit
+            }
     }
 
     /**
@@ -86,7 +101,14 @@ class GraphQlClient(private val serverUrl: String) {
 
         val variables = mapOf("tokenId" to tokenId)
 
-        return execute(mutation, variables)
+        return service.deleteFcmToken(GraphQlRequest(mutation, variables))
+            .requireData()
+            .map { data ->
+                if (data.deleteFcmToken == null) {
+                    throw GraphQlException("Missing deleteFcmToken in GraphQL response.")
+                }
+                Unit
+            }
     }
 
     /**
@@ -110,43 +132,29 @@ class GraphQlClient(private val serverUrl: String) {
             }
         """.trimIndent()
 
-        return executeQuery(query, emptyMap())
+        return service.fcmTokens(GraphQlRequest(query, emptyMap()))
+            .requireData()
             .flatMapMaybe { data ->
-                val tokens = data["fcmTokens"] as? List<*>
-                for (item in tokens.orEmpty()) {
-                    val fcmToken = item as? Map<*, *> ?: continue
-                    if (fcmToken["token"] == token) {
-                        val id = fcmToken["id"] as? String
-                        if (id != null) return@flatMapMaybe Maybe.just(id)
-                    }
+                val tokens = data.fcmTokens
+                    ?: throw GraphQlException("Missing fcmTokens in GraphQL response.")
+                if (tokens.any { it?.id.isNullOrBlank() || it?.token.isNullOrBlank() }) {
+                    throw GraphQlException("Invalid fcmTokens entry in GraphQL response.")
                 }
-                Maybe.empty()
+                val id = tokens.firstOrNull { it?.token == token }?.id
+                if (id != null) Maybe.just(id) else Maybe.empty()
             }
     }
 
-    private fun executeQuery(query: String, variables: Map<String, Any>): Single<Map<String, Any?>> {
-        return service.execute(GraphQlRequest(query = query, variables = variables))
-            .map { response ->
-                if (response.errors?.isNotEmpty() == true) {
-                    throw GraphQlException("GraphQL errors: ${response.errors}")
-                }
-                response.data ?: emptyMap()
+    private fun <T : Any> Single<GraphQlResponse<T>>.requireData(): Single<T> {
+        return map { response ->
+            if (response.errors?.isNotEmpty() == true) {
+                throw GraphQlException("GraphQL errors: ${response.errors}")
             }
-    }
-
-    private fun execute(query: String, variables: Map<String, Any>): Single<Unit> {
-        return service.execute(GraphQlRequest(query = query, variables = variables))
-            .map { response ->
-                if (response.errors?.isNotEmpty() == true) {
-                    throw GraphQlException("GraphQL errors: ${response.errors}")
-                }
-                Unit
-            }
+            response.data ?: throw GraphQlException("Missing data in GraphQL response.")
+        }
     }
 
     companion object {
-        private const val TAG = "GraphQlClient"
-
         const val LIMIT_UNLIMITED = 0
     }
 }

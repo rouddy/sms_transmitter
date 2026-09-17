@@ -12,10 +12,49 @@ data class GraphQlRequest(
 interface GraphQlApiService {
 
     @POST("graphql")
-    fun execute(@Body request: GraphQlRequest): Single<GraphQlResponse>
+    fun fcmTokens(@Body request: GraphQlRequest): Single<GraphQlResponse<FcmTokensResponse>>
+
+    @POST("graphql")
+    fun registerFcmToken(@Body request: GraphQlRequest): Single<GraphQlResponse<RegisterFcmTokenResponse>>
+
+    @POST("graphql")
+    fun deleteFcmToken(@Body request: GraphQlRequest): Single<GraphQlResponse<DeleteFcmTokenResponse>>
+
+    @POST("graphql")
+    fun reportSmsResult(@Body request: GraphQlRequest): Single<GraphQlResponse<ReportSmsResultResponse>>
 }
 
-data class GraphQlResponse(
-    val data: Map<String, Any?>?,
-    val errors: List<Map<String, Any?>>?,
+data class GraphQlResponse<T>(
+    val data: T?,
+    val errors: List<GraphQlError>?,
+)
+
+data class GraphQlError(
+    val message: String?,
+)
+
+// Nullable wire fields allow missing/null values from Gson to be validated by the client.
+data class FcmTokensResponse(
+    val fcmTokens: List<FcmTokenDto?>?,
+)
+
+data class FcmTokenDto(
+    val id: String?,
+    val token: String?,
+)
+
+data class RegisterFcmTokenResponse(
+    val registerFcmToken: RegisteredFcmTokenDto?,
+)
+
+data class RegisteredFcmTokenDto(
+    val id: String?,
+)
+
+data class DeleteFcmTokenResponse(
+    val deleteFcmToken: Boolean?,
+)
+
+data class ReportSmsResultResponse(
+    val reportSmsResult: Boolean?,
 )

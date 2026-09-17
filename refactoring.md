@@ -17,7 +17,7 @@
 |---|---|---|---|
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
 | P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
-| P1 | GraphQL 응답 `Map<String,Any?>` 캐스팅 | Android | 타입 안전성 부족 |
+| P1 | ✅ GraphQL 응답 타입 안전화 (완료) | Android | 연산별 응답 DTO 적용, 수동 캐스팅·silent skip 제거 |
 | P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
 | P1 | 설정 마이그레이션 잔재 정리 | Android | `SmsLimitSettings` legacy 키 |
 | P1 | 피드백 응답시 발신 카운트 증가 분기 | Rocket | 정상/fallback 경로 분기 |
@@ -51,15 +51,17 @@
 - **개선 방향**:
   - 전부 `strings.xml` 리소스로 옮기고 `getString(R.string...., args)` 포맷을 사용합니다. 기존 `sms_success`/`sms_failure` 리소스도 이미 있으므로 `"SMS: "` 접두어 문구만 리소스로 추가하면 됩니다.
 
-### 3. GraphQL 응답 타입 안전화 (Android)
+### 3. GraphQL 응답 타입 안전화 (Android) — ✅ 완료
 
-- **위치**: `GraphQlClient.kt` `findFcmTokenId`, `GraphQlApiService.kt` `GraphQlResponse`
-- **문제**:
-  - `GraphQlResponse.data`가 `Map<String, Any?>?`이라서 응답을 `as? List<*>` / `as? Map<*,*>` 로 수동 캐스팅하고 있습니다. 필드명 오타나 타입 불일치가 런타임에서야 드러납니다.
-- **개선 방향**:
-  - 쿼리별 응답 DTO를 정의하고 Gson(또는 kotlinx.serialization)으로 매핑합니다.
-  - 예: `data class FcmTokensResponse(val fcmTokens: List<FcmTokenDto>)`, `FcmTokenDto(val id: String, val token: String)`.
-  - `registerFcmToken`이 `{ id }`를 반환하는데 현재 버리고 있으므로 DTO로 받아 저장하면, `fcmTokens` 전체 조회로 id를 역추적하는 `deleteFcmTokenByToken` 구조를 개선할 수 있습니다.
+- **위치**: `GraphQlApiService.kt`, `GraphQlClient.kt`, `GraphQlClientTest.kt`
+- **기존 문제**: 응답을 `Map<String, Any?>`와 수동 캐스팅으로 처리하고, 잘못된 토큰 항목이나 누락된 데이터를 토큰 없음으로 취급했습니다.
+- **적용 내용**:
+  - `GraphQlResponse<T>`와 `GraphQlError`, 연산별 응답 DTO를 정의하고 Retrofit 메서드를 조회·등록·삭제·결과 보고의 구체적인 반환 타입으로 분리했습니다. 기존 Gson 변환기를 사용합니다.
+  - `findFcmTokenId`는 DTO 필드로 조회하며, 목록 내 필수 ID/토큰이 누락되거나 비어 있는 항목은 조용히 건너뛰지 않고 오류로 처리합니다.
+  - 공통 `requireData()`로 GraphQL 오류 및 누락된 data를 검증하고, 각 연산에서 등록 ID와 Boolean 응답 필드의 존재를 확인합니다. Gson으로 읽는 필드는 nullable로 선언하고 클라이언트에서 명시적으로 검증합니다.
+- **호환성**: 공개 `Single<Unit>` API, 유효한 목록에 일치하는 토큰이 없으면 삭제 없이 성공하는 동작, 오류 없는 Boolean `false` 응답을 허용하는 동작을 유지했습니다. 앱의 네트워크 스케줄링은 변경하지 않았습니다.
+- **후속 개선**: 등록 응답 ID는 검증하지만 저장하지 않습니다. 서버 URL별 ID 캐시와 무효화 정책은 이번 범위에 포함하지 않았으며, 삭제 시 전체 토큰 목록을 조회하는 구조는 유지합니다.
+- **검증**: 실제 Retrofit/Gson 파이프라인에 인터셉터로 응답을 주입하는 회귀 테스트 14개를 추가했습니다. 정상 조회·삭제, 빈/불일치 목록, 누락 데이터·잘못된 응답 구조, GraphQL 오류, mutation 응답 검증 및 전송 오류 전파를 확인했습니다. `./gradlew :app:compileDebugKotlin`과 `./gradlew :app:testDebugUnitTest` 통과(기존 7개 포함 전체 21개). 테스트에만 동기 RxJava 어댑터를 사용하며 실제 서버/기기 연동 테스트는 수행하지 않았습니다.
 
 ### 4. `status` 문자열 타이핑 개선 (Rocket) — ✅ 완료
 
@@ -144,7 +146,7 @@
 ## 제안 실행 순서
 
 1. **Rocket 마무리**: `status` enum 전환(4) 완료 → 피드백 발신 카운트 분기 정리(6).
-2. **Android 구조 정리**: GraphQL 보일러플레이트 공통화(1) → 타입 안전화(3) → 하드코딩 문자열(2) 순으로 연결.
+2. **Android 구조 정리**: 타입 안전화(3) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2)·legacy 잔재(5) 제거 (`status`(4)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 타임아웃, 빌드 설정 등 후순위.
 
