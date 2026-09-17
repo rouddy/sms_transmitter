@@ -15,9 +15,6 @@ use crate::firebase::FirebaseClient;
 
 const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
 
-pub const STATUS_SENDING: &str = "Sending";
-pub const STATUS_SENT: &str = "Sent";
-pub const STATUS_FAILED: &str = "Failed";
 const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -27,13 +24,12 @@ pub enum SmsStatus {
     Failed,
 }
 
-impl SmsStatus {
-    fn from_str(s: &str) -> Self {
-        match s {
-            STATUS_SENDING => Self::Sending,
-            STATUS_SENT => Self::Sent,
-            STATUS_FAILED => Self::Failed,
-            _ => Self::Failed,
+impl From<sms_request::SmsStatus> for SmsStatus {
+    fn from(status: sms_request::SmsStatus) -> Self {
+        match status {
+            sms_request::SmsStatus::Sending => Self::Sending,
+            sms_request::SmsStatus::Sent => Self::Sent,
+            sms_request::SmsStatus::Failed => Self::Failed,
         }
     }
 }
@@ -57,7 +53,7 @@ pub struct SmsRequest {
 impl From<sms_request::Model> for SmsRequest {
     fn from(m: sms_request::Model) -> Self {
         Self {
-            status: SmsStatus::from_str(&m.status),
+            status: m.status.into(),
             assigned_device_id: m.assigned_token_id.map(|id| ID(id.to_string())),
             assigned_phone_number_id: m.assigned_phone_number_id.map(|id| ID(id.to_string())),
             id: ID(m.id.to_string()),
@@ -69,6 +65,25 @@ impl From<sms_request::Model> for SmsRequest {
             error: m.error,
             created_at: m.created_at.to_string(),
             updated_at: m.updated_at.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SmsStatus;
+    use crate::entity::sms_request;
+    use async_graphql::{InputType, Value};
+
+    #[test]
+    fn status_conversion_preserves_graphql_values() {
+        for (status, expected) in [
+            (sms_request::SmsStatus::Sending, "SENDING"),
+            (sms_request::SmsStatus::Sent, "SENT"),
+            (sms_request::SmsStatus::Failed, "FAILED"),
+        ] {
+            let status = SmsStatus::from(status);
+            assert_eq!(status.to_value(), Value::Enum(async_graphql::Name::new(expected)));
         }
     }
 }
@@ -142,7 +157,6 @@ impl SmsRequestMutation {
 
         let request_id = Uuid::new_v4();
 
-        let status = STATUS_SENDING.to_string();
         let (selected_phone_number, token) = selected.unwrap();
         let assigned_token_id = Some(token.id);
         let assigned_phone_number_id = Some(selected_phone_number.id);
@@ -154,7 +168,7 @@ impl SmsRequestMutation {
             callback_url: Set(input.callback_url.clone()),
             callback_response_code: Set(None),
             callback_response_body: Set(None),
-            status: Set(status),
+            status: Set(sms_request::SmsStatus::Sending),
             assigned_token_id: Set(assigned_token_id),
             assigned_phone_number_id: Set(assigned_phone_number_id),
             error: Set(None),
@@ -193,7 +207,7 @@ impl SmsRequestMutation {
                         .await
                     {
                         let mut active: sms_request::ActiveModel = req.into();
-                        active.status = Set(STATUS_FAILED.to_string());
+                        active.status = Set(sms_request::SmsStatus::Failed);
                         active.error = Set(Some(e.to_string()));
                         active.updated_at = Set(Local::now().naive_local());
                         let _ = active.update(&db_clone).await;
@@ -262,10 +276,10 @@ impl SmsRequestMutation {
         let callback_url = request.callback_url.clone();
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
-            active.status = Set(STATUS_SENT.to_string());
+            active.status = Set(sms_request::SmsStatus::Sent);
             active.error = Set(None);
         } else {
-            active.status = Set(STATUS_FAILED.to_string());
+            active.status = Set(sms_request::SmsStatus::Failed);
             active.error = Set(input.error);
         }
         active.updated_at = Set(now);

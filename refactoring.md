@@ -7,7 +7,7 @@
 - **P1** — 구조 개선·가독성·중복 제거 등 유지보수성 향상 항목
 - **P2** — 마이너 폴리시·관례 일관성 항목
 
-> P0 항목은 모두 처리 완료(이력은 git 참조). 아래는 잔여 항목입니다.
+> P0 항목은 모두 처리 완료(이력은 git 참조). 아래는 후속 항목이며, 완료된 항목은 별도로 표시합니다.
 
 ---
 
@@ -18,7 +18,7 @@
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
 | P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
 | P1 | GraphQL 응답 `Map<String,Any?>` 캐스팅 | Android | 타입 안전성 부족 |
-| P1 | `status` 문자열 타이핑 | Rocket | `"Sending"/"Sent"/"Failed"` 오타·silent fallback |
+| P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
 | P1 | 설정 마이그레이션 잔재 정리 | Android | `SmsLimitSettings` legacy 키 |
 | P1 | 피드백 응답시 발신 카운트 증가 분기 | Rocket | 정상/fallback 경로 분기 |
 | P1 | `SettingsActivity` 분리 | Android | 단일 액티비티의 다중 책임 |
@@ -61,14 +61,16 @@
   - 예: `data class FcmTokensResponse(val fcmTokens: List<FcmTokenDto>)`, `FcmTokenDto(val id: String, val token: String)`.
   - `registerFcmToken`이 `{ id }`를 반환하는데 현재 버리고 있으므로 DTO로 받아 저장하면, `fcmTokens` 전체 조회로 id를 역추적하는 `deleteFcmTokenByToken` 구조를 개선할 수 있습니다.
 
-### 4. `status` 문자열 타이핑 개선 (Rocket)
+### 4. `status` 문자열 타이핑 개선 (Rocket) — ✅ 완료
 
-- **위치**: `sms_transmitter_rocket/src/entity/sms_request.rs` (`status: String`), `graphql/sms_request.rs` (`STATUS_*` 상수 + `SmsStatus::from_str`)
-- **문제**:
-  - 상태가 DB에 매직 문자열(`"Sending"/"Sent"/"Failed"`)로 저장되고, `from_str`은 **알 수 없는 값을 조용히 `Failed`로 매핑**합니다. DB에 잘못된 값이 들어가도 오류 없이 "Failed"로 보여 데이터 불일치를 숨깁니다.
-- **개선 방향**:
-  - SeaORM에서 enum 컬럼(예: `SmsStatus` derive `EnumIter` + `DeriveActiveEnum`)으로 전환하거나, 최소한 `from_str`이 알 수 없는 값을 로그+에러로 처리하게 바꿉니다.
-  - GraphQL DTO 변환 시에도 `TryFrom`/`Result`로 실패를 명시하도록 바꾸면 silent fallback을 제거할 수 있습니다.
+- **위치**: `sms_transmitter_rocket/src/entity/sms_request.rs`, `src/graphql/sms_request.rs`
+- **기존 문제**: 상태를 문자열로 처리하고 알 수 없는 값을 조용히 `Failed`로 매핑해 데이터 불일치를 숨겼습니다.
+- **적용 내용**:
+  - 엔티티에 `EnumIter` + `DeriveActiveEnum` 기반 `SmsStatus`를 정의하고 `Model.status`를 `String`에서 enum으로 변경했습니다.
+  - 요청 생성·FCM 실패·결과 보고의 상태 저장에 enum을 사용하고 `STATUS_*` 상수와 `from_str` fallback을 제거했습니다.
+  - GraphQL enum은 기존 API를 유지하며, 엔티티 enum에서 모든 variant를 명시적으로 매핑합니다. 알 수 없는 DB 값은 SeaORM 역직렬화 단계에서 오류가 발생하고 조회 resolver의 `?`를 통해 GraphQL 오류로 전달되므로 DTO 변환은 `From`으로 충분합니다.
+- **호환성**: SQLite 문자열 컬럼과 기존 저장값(`Sending`/`Sent`/`Failed`), GraphQL 값(`SENDING`/`SENT`/`FAILED`)을 유지하므로 DB 마이그레이션은 필요 없습니다. DB 자체에 CHECK 제약을 추가한 것은 아니므로 외부 SQL로 잘못된 값을 넣으면 조회 시 오류가 납니다.
+- **검증**: DB 값 매핑, SQLite의 정상값 역직렬화·알 수 없는 값 거부, GraphQL enum 값 유지 테스트를 추가했습니다. `cargo check` 및 `cargo test` 통과(전체 21개).
 
 ### 5. 설정 마이그레이션 잔재 정리 (Android)
 
@@ -141,9 +143,9 @@
 
 ## 제안 실행 순서
 
-1. **Rocket 마무리**: `status` 문자열 타이핑 개선(4) → 피드백 발신 카운트 분기 정리(6).
+1. **Rocket 마무리**: `status` enum 전환(4) 완료 → 피드백 발신 카운트 분기 정리(6).
 2. **Android 구조 정리**: GraphQL 보일러플레이트 공통화(1) → 타입 안전화(3) → 하드코딩 문자열(2) 순으로 연결.
-3. **타입/문자열/설정 정리**: 하드코딩·매직 문자열(`status`(4))·legacy 잔재(5) 제거.
+3. **타입/문자열/설정 정리**: 하드코딩 문자열(2)·legacy 잔재(5) 제거 (`status`(4)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 타임아웃, 빌드 설정 등 후순위.
 
 > 참고: `sendTextMessage` 전송 결과 확인(10)은 "리팩토링"이라기보다 정확성 이슈이므로 단독으로 다루는 편이 안전합니다.
