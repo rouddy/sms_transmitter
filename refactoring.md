@@ -20,7 +20,7 @@
 | P1 | ✅ GraphQL 응답 타입 안전화 (완료) | Android | 연산별 응답 DTO 적용, 수동 캐스팅·silent skip 제거 |
 | P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
 | P1 | 설정 마이그레이션 잔재 정리 | Android | `SmsLimitSettings` legacy 키 |
-| P1 | 피드백 응답시 발신 카운트 증가 분기 | Rocket | 정상/fallback 경로 분기 |
+| P1 | ✅ 피드백 응답시 발신 카운트 증가 분기 (완료) | Rocket | fallback 경로 제거, 단일 경로로 정리 |
 | P1 | `SettingsActivity` 분리 | Android | 단일 액티비티의 다중 책임 |
 | P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
 | P2 | `notifyDataSetChanged()` → DiffUtil | Android | RecyclerView 성능 |
@@ -82,13 +82,22 @@
 - **개선 방향**:
   - legacy 읽기·쓰기 경로를 제거하고 `remove(...)`로 한 번 정리하는 절차를 문서화한 뒤, `getConfig`/`savePhoneNumberConfigs`를 신규 JSON 단일 소스로 단순화합니다.
 
-### 6. 피드백 응답시 발신 카운트 증가 분기 정리 (Rocket)
+### 6. 피드백 응답시 발신 카운트 증가 분기 정리 (Rocket) — ✅ 완료
 
 - **위치**: `sms_transmitter_rocket/src/graphql/sms_request.rs` `report_sms_result`
-- **문제**:
-  - `assigned_phone_number_id`로 증가하는 정상 경로와, 그것이 없을 때 `assigned_token_id`로 fallback 발신자를 찾아 증가하는 예외 경로가 따로 작성되어 있어 읽기 어렵습니다.
-- **개선 방향**:
-  - "증가 대상 `phone_number::Model` 해석"을 하나의 헬퍼 함수로 추출하고 두 경로를 합칩니다. fallback은 주석으로 왜 필요한지 명시합니다(스키마 이행기 데이터 호환).
+- **기존 문제**: `assigned_phone_number_id`로 증가하는 정상 경로와, 그것이 없을 때 `assigned_token_id`로 fallback 발신자를 찾아 증가하는 예외 경로가 따로 작성되어 있어 읽기 어려웠습니다. 두 경로에 증가·저장 코드가 중복되고, "증가 대상 없음"을 정상 경로는 하드 에러로, fallback은 조용한 no-op으로 비대칭 처리했습니다.
+- **적용 내용**:
+  - fallback 경로를 **제거**하고 `assigned_phone_number_id` 단일 경로로 정리했습니다. `request_sms`는 요청 생성 시 `assigned_token_id`와 `assigned_phone_number_id`를 항상 함께 기록하므로, NULL인 행은 `m20260813_000004`(한도를 번호 단위로 이전) 이전에 생성돼 백필 시 NULL로 남은 요청뿐입니다. 이 배경을 코드 주석으로 남겼습니다.
+  - fallback에 있던 `fcm_token` 조회를 제거했습니다. `token.id`는 인자로 받은 `token_id`와 동일해 필터 외에는 쓰이지 않는 중복 조회였고, 바로 아래 `last_access_time` 갱신 블록에서 같은 토큰을 한 번 더 조회하고 있었습니다.
+  - fallback의 `.one()`은 정렬이 없어 토큰이 번호를 여러 개 보유하면 어느 번호가 증가할지 비결정적이었습니다. 경로 자체를 없애면서 이 문제도 사라졌습니다.
+  - `if let` / `else if let` 중첩을 `match`로 바꾸고, 중복됐던 `now.date()` 호출과 `today` 지역 변수 혼용을 통일했습니다. 해석 실패는 `tracing::warn!`으로 남깁니다(기존에는 완전히 무음).
+- **호환성**: 신규 요청의 동작은 동일합니다. 바뀌는 지점은 두 가지입니다. (1) `assigned_phone_number_id`가 NULL인 이행기 요청은 성공 보고 시 발신 카운트가 증가하지 않고 warn 로그만 남습니다(상태 갱신·콜백 호출은 정상 수행). (2) 도달 불가능했던 `"FCM token not found"` 에러가 사라졌습니다 — `phone_numbers.fcm_token_id`는 `ON DELETE CASCADE`, `sms_requests.assigned_token_id`는 `ON DELETE SET NULL`이므로 토큰이 삭제되면 `assigned_token_id`가 NULL이 되어 애초에 해당 분기에 진입할 수 없었습니다. 이 에러는 발생 시 mutation 전체를 실패시켜 `status`를 `Sending`에 영구히 남기는 최악의 실패 모드를 갖고 있었습니다.
+- **후속 확인 필요**: 운영 DB에 `assigned_phone_number_id IS NULL AND status = 'Sending'`인 행이 남아 있다면, 그 요청들은 결과 보고 시 카운트가 반영되지 않습니다. 배포 전 아래 쿼리로 0인지 확인하는 것을 권장합니다.
+  ```sql
+  SELECT count(*) FROM sms_requests
+  WHERE assigned_phone_number_id IS NULL AND status = 'Sending';
+  ```
+- **검증**: `cargo check`, `cargo clippy`, `cargo test` 통과(기존 21개 전체). 순수 삭제 위주 변경이고 `report_sms_result`는 GraphQL 컨텍스트에 의존하므로 전용 테스트 하네스는 추가하지 않았습니다.
 
 ### 7. `SettingsActivity` 분리 (Android)
 
@@ -145,7 +154,7 @@
 
 ## 제안 실행 순서
 
-1. **Rocket 마무리**: `status` enum 전환(4) 완료 → 피드백 발신 카운트 분기 정리(6).
+1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. 남은 Rocket 항목은 P2(11, 13).
 2. **Android 구조 정리**: 타입 안전화(3) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2)·legacy 잔재(5) 제거 (`status`(4)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 타임아웃, 빌드 설정 등 후순위.

@@ -237,29 +237,24 @@ impl SmsRequestMutation {
             .ok_or_else(|| async_graphql::Error::new("SMS request not found"))?;
 
         if input.success {
-            if let Some(phone_number_id) = request.assigned_phone_number_id {
-                let mut phone_number_model = phone_number::Entity::find_by_id(phone_number_id)
-                    .one(&txn)
-                    .await?
-                    .ok_or_else(|| async_graphql::Error::new("assigned phone number not found"))?;
-                let today = now.date();
-                phone_number_model.increment_sent_counts(today);
-                let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
-                phone_number_active.update(&txn).await?;
-            } else if let Some(token_id) = request.assigned_token_id {
-                let token = fcm_token::Entity::find_by_id(token_id)
-                    .one(&txn)
-                    .await?
-                    .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
-                let fallback_phone_number = phone_number::Entity::find()
-                    .filter(phone_number::Column::FcmTokenId.eq(token.id))
-                    .one(&txn)
-                    .await?;
-                if let Some(mut phone_number_model) = fallback_phone_number {
+            // `request_sms`는 항상 `assigned_phone_number_id`를 채운다. NULL인 행은
+            // m20260813_000004(한도를 번호 단위로 이전) 이전에 생성돼 백필 시 NULL로
+            // 남은 요청뿐이며, 증가시킬 번호를 특정할 수 없으므로 카운트를 생략한다.
+            match request.assigned_phone_number_id {
+                Some(phone_number_id) => {
+                    let mut phone_number_model = phone_number::Entity::find_by_id(phone_number_id)
+                        .one(&txn)
+                        .await?
+                        .ok_or_else(|| {
+                            async_graphql::Error::new("assigned phone number not found")
+                        })?;
                     phone_number_model.increment_sent_counts(now.date());
                     let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
                     phone_number_active.update(&txn).await?;
                 }
+                None => tracing::warn!(
+                    "SMS request {request_id} has no assigned phone number; skipping sent-count increment"
+                ),
             }
         }
 
