@@ -4,3 +4,4 @@ firebase-credentials.json
 *.db
 *.db-shm
 *.db-wal
+*.pem
