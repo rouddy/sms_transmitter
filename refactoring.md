@@ -25,9 +25,10 @@
 | P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
 | P2 | `notifyDataSetChanged()` → DiffUtil | Android | RecyclerView 성능 |
 | P2 | `sendTextMessage` 전송 결과 확인 부재 | Android | "성공" != 실제 수신 |
-| P2 | 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 | Rocket | `firebase.rs` |
+| P2 | ✅ 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 (완료) | Rocket | `firebase.rs` |
 | P2 | 빌드타임 로컬 IP 감지 | Android | `build.gradle.kts` |
 | P2 | 부가 정리 | Rocket | `db.rs`·매직 상수·정규화 공유 |
+| P1 | 결과 보고 멱등성 부재 | Rocket+Android | 같은 `requestId` 중복 보고시 카운트 중복 증가 |
 
 ---
 
@@ -130,13 +131,25 @@
 - **문제**: `sendTextMessage`/`sendMultipartTextMessage`를 PendingIntent(sent/delivered) 없이 호출해 "라디오에 전달됨"을 곧 "성공"으로 처리합니다. 실제 수신·실패 여부가 반영되지 않아 서버에 잘못된 `success=true`를 보고할 수 있습니다.
 - **개선 방향**: sent/delivered PendingIntent를 전달해 결과를 비동기로 수신하고, 그 결과를 기준으로 `reportSmsResult`를 호출하도록 변경합니다(정확성 개선이므로 사실상 P0에 가까운 논의 대상).
 
-### 11. 토큰 뮤텍스 홀딩 & HTTP 타임아웃 부재 (Rocket)
+### 11. 토큰 뮤텍스 홀딩 & HTTP 타임아웃 부재 (Rocket) — ✅ 완료
 
 - **위치**: `sms_transmitter_rocket/src/firebase.rs`
-- **문제**:
-  - `get_access_token`이 OAuth 토큰 갱신 HTTP 호출 **전 구간 동안 뮤텍스를 들고 있어** 동시 요청이 직렬화됩니다.
-  - `send_sms_request`의 FCM HTTP 호출과 토큰 발급 호출에 명시적 타임아웃이 없습니다(콜백 호출은 `Duration::from_secs(5)`가 있으나 FCM은 없음).
-- **개선 방향**: 토큰 갱신은 뮤텍스 밖에서 수행하고 캐시 교체만 원자적으로 처리하거나, `tokio::sync::OnceCell`/`RwLock`으로 전환합니다. FCM 발송에도 타임아웃·재시도/백오프를 추가합니다.
+- **기존 문제**:
+  - `get_access_token`이 OAuth 토큰 갱신 HTTP 호출 전 구간 동안 뮤텍스를 들고 있어 동시 요청이 직렬화됐습니다.
+  - `send_sms_request`의 FCM HTTP 호출과 토큰 발급 호출에 명시적 타임아웃이 없었습니다(콜백 호출만 `Duration::from_secs(5)` 보유).
+- **적용 내용**:
+  - 캐시를 `Arc<Mutex<..>>` → `RwLock`으로 바꾸고, 갱신 직렬화용 `token_refresh: Mutex<()>`를 분리했습니다. 캐시 읽기는 read 락으로 통과하고 갱신만 직렬화되며, 갱신 락 획득 후 재확인(double-check)으로 대기 중 다른 태스크가 이미 갱신했으면 HTTP 호출을 생략합니다.
+  - HTTP 클라이언트에 `connect_timeout` 5초 / `timeout` 30초를 설정했습니다. 이로 인해 `FirebaseClient::new`가 `Self` → `Result<Self>`로 바뀌었습니다.
+  - FCM 발송에 재시도/백오프를 추가했습니다(`send_fcm` + `fcm_retry_delay`). 최대 3회, 429는 60초 기준·500/503은 10초 기준 지수 백오프, `Retry-After` 존중(초 단위 및 HTTP 날짜), 상한 120초.
+  - 토큰 응답 검증을 추가했습니다. 비성공 상태는 **응답 본문을 포함해** 실패시키고(`invalid_grant` 등 자격증명 오류 진단에 필수), 빈 토큰·과도하게 짧은 수명도 거부합니다.
+  - 성공 로그가 `fcm_token` 대신 `request_id`를 남기도록 바뀌어 로그에 토큰이 노출되지 않습니다.
+- **재시도 범위를 좁힌 근거**: 429/500/503만 재시도합니다. 이 코드들은 FCM이 메시지를 받지 않았음을 명시적으로 알린 경우이므로 재전송이 안전합니다. 반면 502/504나 전송 타임아웃은 중간 경로에서 응답만 유실됐을 수 있어, 재시도하면 같은 `requestId`로 SMS가 두 번 발송될 수 있습니다. 이 판단을 코드 주석과 테스트로 고정했습니다.
+- **후속 검토에서 보강한 사항**:
+  - **토큰 staleness**: 백오프 대기(최악 약 3분)가 토큰 만료 여유(60초)를 넘길 수 있어, 재시도 중 401로 실패할 수 있었습니다. 액세스 토큰 취득을 재시도 루프 안으로 옮겨 시도마다 유효한 토큰을 쓰도록 했습니다(캐시 히트면 비용 없음).
+  - **`unreachable!()` 제거**: `for` 루프 끝의 `unreachable!("the last attempt never retries")`는 불변식이 `fcm_retry_delay`에 있어, 그 함수를 고치면 운영 중 패닉으로 이어질 수 있었습니다. `loop` + 모든 비재시도 경로에서 `bail!` 구조로 바꿔 컴파일러가 보장하도록 했습니다.
+  - **`Retry-After` 파싱 실패 처리**: 기존에는 헤더를 해석하지 못하면 `None`을 반환해 **재시도를 아예 포기**했는데, 주석의 의도("더 일찍 재시도하지 않는다")와 달랐습니다. 파싱 실패는 헤더를 무시하고 계산된 백오프를 쓰도록 바꿨고, "과도한 대기(>120초)는 즉시 실패"라는 정책만 남겼습니다.
+- **검증**: `fcm_retry_delay`를 순수 함수로 유지해 단위 테스트 7개를 추가했습니다 — 지수 백오프 값, 비재시도 상태(4xx/502/504), 마지막 시도, `Retry-After` 연장/단축 금지, 과도한 값 즉시 실패, 파싱 실패 폴백, HTTP 날짜(`GMT` 표기) 해석 및 과거 시각 무시. `cargo fmt --check`·`cargo check`·`cargo clippy --all-targets`·`cargo test` 통과(전체 28개). 남은 clippy 경고 2건은 이 항목과 무관한 기존 것입니다. 실제 FCM 서버 연동 테스트는 수행하지 않았습니다.
+- **부수 정리**: 참조되지 않는 `src/firebase/test-key.pem`(개인키 형식)이 작업 트리에 남아 있었습니다. 실수로 커밋되지 않도록 `.gitignore`에 `*.pem`을 추가했습니다. 파일 자체의 삭제 여부는 보류했습니다.
 
 ### 12. 빌드타임 로컬 IP 자동 감지 (Android)
 
@@ -152,11 +165,27 @@
 
 ---
 
+## 추가 발견 항목
+
+### 14. 결과 보고 멱등성 부재 (Rocket + Android) — P1
+
+- **위치**: `sms_transmitter_rocket/src/graphql/sms_request.rs` `report_sms_result`, `sms_transmitter_Android/.../FirebaseMessageReceiverService.kt` `onMessageReceived`
+- **문제**:
+  - `report_sms_result`는 현재 상태를 보지 않고 발신 카운트를 증가시키고 상태를 덮어씁니다. 같은 `requestId`로 두 번 보고되면 카운트가 두 번 증가해 한도 계산이 어긋납니다.
+  - Android 쪽도 `requestId` 기준 중복 제거가 없어, FCM이 같은 메시지를 두 번 전달하면 SMS가 두 번 발송됩니다. FCM은 at-least-once 전달이므로 중복은 정상 동작 범위입니다.
+- **개선 방향**:
+  - 서버: `report_sms_result`에서 `status`가 `Sending`일 때만 카운트 증가와 상태 전이를 수행하고, 이미 종료 상태면 성공으로 응답하되 아무것도 바꾸지 않습니다(멱등). 트랜잭션 안에서 상태를 확인하므로 추가 락은 불필요합니다.
+  - Android: 처리한 `requestId`를 짧은 TTL로 기록해 중복 수신을 건너뜁니다.
+- **우선순위 근거**: 11번에서 FCM 재시도를 추가하면서 중복 전송 경로를 의도적으로 배제했지만(429/500/503만 재시도), FCM 자체의 중복 전달은 여전히 남아 있습니다. 카운트 정확성에 직접 영향이 있어 P1로 둡니다.
+
+---
+
 ## 제안 실행 순서
 
 1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. 남은 Rocket 항목은 P2(11, 13).
 2. **Android 구조 정리**: 타입 안전화(3) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2)·legacy 잔재(5) 제거 (`status`(4)는 완료).
-4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 타임아웃, 빌드 설정 등 후순위.
+4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).
+5. **멱등성**: 결과 보고 멱등성(14) — 서버 가드를 먼저 넣고 Android 중복 제거를 뒤따르게 하는 것이 안전합니다.
 
 > 참고: `sendTextMessage` 전송 결과 확인(10)은 "리팩토링"이라기보다 정확성 이슈이므로 단독으로 다루는 편이 안전합니다.
