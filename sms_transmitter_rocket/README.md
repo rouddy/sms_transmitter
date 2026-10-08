@@ -226,3 +226,35 @@ query {
 |---|---|---|
 | `DATABASE_URL` | `sqlite://db/sms_transmitter.db?mode=rwc` | SeaORM database URL |
 | `FIREBASE_CREDENTIALS_PATH` | `firebase-credentials.json` | Path to Firebase service account JSON (project ID is read from this file) |
+
+## Scripts
+
+### Test SMS Script (`script/test_sens_sms.sh`)
+
+`requestSms` (`request_sms`) GraphQL mutation을 호출하여 SMS 발송을 테스트하는 쉘 스크립트입니다.
+
+```bash
+# 기본 사용법 (기본 Base URL: http://localhost:54323, 기본 메시지: "문자 받으면 연락주세요")
+./script/test_sens_sms.sh --phone 01012345678
+
+# 메시지 및 Base URL 직접 지정
+./script/test_sens_sms.sh http://localhost:54323 --phone 01012345678 --msg "인증번호: 123456"
+
+# Callback URL 포함
+./script/test_sens_sms.sh --phone 01012345678 --callback "https://example.com/callback"
+
+# 도움말 확인
+./script/test_sens_sms.sh --help
+```
+
+#### Parameters & Options
+
+| 인자 / 옵션 | 필수 여부 | 기본값 | 설명 |
+|---|---|---|---|
+| `[BASE_URL]` / `--base-url`, `-b` | 선택 | `http://localhost:54323` | GraphQL 서버 Base URL (기본 위치 인자 또는 플래그로 지정 가능) |
+| `--phone`, `-p` | **필수** | - | 수신자 전화번호 (누락 시 에러 발생) |
+| `--msg`, `-m` | 선택 | `"문자 받으면 연락주세요"` | 전송할 SMS 메시지 내용 |
+| `--callback`, `-c` | 선택 | - | SMS 발송 결과 리포트 수신용 Callback URL |
+| `--dry-run` | 선택 | - | 실제 요청을 전송하지 않고 엔드포인트와 페이로드 JSON만 출력 |
+| `--help`, `-h` | 선택 | - | 사용법 안내 출력 |
+
