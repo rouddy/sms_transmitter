@@ -26,20 +26,22 @@ cargo check      # fast compile check
 cargo clippy     # lint
 ```
 
+- Startup fails without an auth public key at `keys/public_key.pem` (dir overridable via `AUTH_KEYS_DIR`); create it with `script/generate_keys.sh` (`--rotate` to replace). `script/make_jwt.sh` prints a token for curl/GraphiQL.
 - Startup fails without a Firebase service-account JSON at `firebase-credentials.json` (project root) or the path given by `FIREBASE_CREDENTIALS_PATH`.
-- Config loads from `.env` via dotenvy: `DATABASE_URL` (default `sqlite://db/sms_transmitter.db?mode=rwc`), `FIREBASE_CREDENTIALS_PATH`.
+- Config loads from `.env` via dotenvy: `DATABASE_URL` (default `sqlite://db/sms_transmitter.db?mode=rwc`), `FIREBASE_CREDENTIALS_PATH`, `AUTH_KEYS_DIR` (default `keys`).
 - Listen address/port come from `Rocket.toml` (currently `0.0.0.0:54323` — the README's `localhost:8000` is stale). GraphiQL UI at `/graphiql`, API at `/graphql`.
-- No test suite exists yet.
+- `cargo test` runs the unit tests (inline `#[cfg(test)]` modules).
 - Release images: `docker/build_and_push.sh` multi-arch-builds `rouddy/sms_transmitter` tagged with the version from `Cargo.toml` and pushes to Docker Hub.
 
 ## Architecture
 
-Startup (`src/main.rs`): load `.env` → init tracing → read env config → connect DB → run migrations → build `FirebaseClient` from service-account JSON → assemble the async-graphql `Schema` with `DatabaseConnection` and `Arc<FirebaseClient>` injected as schema data → mount `/graphql` routes.
+Startup (`src/main.rs`): load `.env` → init tracing → read env config → load auth public key(s) → connect DB → run migrations → build `FirebaseClient` from service-account JSON → assemble the async-graphql `Schema` with `DatabaseConnection` and `Arc<FirebaseClient>` injected as schema data → mount `/graphql` routes.
 
 Layers:
 
 - `src/entity/` — SeaORM entities (`fcm_token`, `phone_number`, `sms_request`). Domain logic lives on the models themselves: quota math (`can_send_now`, `availability_score`, `increment_sent_counts`, lazy resets) is in `entity/phone_number.rs`.
 - `src/graphql/` — resolvers merged into `QueryRoot`/`MutationRoot` (`mod.rs`); each resolver pulls `DatabaseConnection` / `Arc<FirebaseClient>` out of the GraphQL context. Entity models convert to GraphQL DTOs via `From` impls; datetimes become strings, and client-facing sent-counts are computed as *effective* values (shown as 0 once the reset window has passed even though the DB retains the count).
+- `src/auth.rs` — shared-key auth. All callers (API clients and the Android app, which embeds the key via BuildConfig) hold one ES256 private key; the server holds only `public_key.pem` (+ optional `public_key.previous.pem` during rotation). The `Authenticated` request guard on both `/graphql` routes requires `Authorization: Bearer <JWT>` with `iat`/`exp` (lifetime ≤ 300s, 60s leeway). There are no roles: a valid token can call every API. `/graphiql` stays open.
 - `src/firebase.rs` — `FirebaseClient`: OAuth2 JWT-bearer flow against the service account (access token cached until near expiry), then FCM v1 HTTP `messages:send`.
 - `src/migration/` — SeaORM migrations, applied automatically at startup.
 

@@ -1,0 +1,23 @@
+# Run from the crate root (sms_transmitter_rocket/):
+#   ./script/generate_keys.sh
+#   docker compose -f docker/docker-compose.yml up -d
+#
+# Paths below are relative to this file (docker/).
+services:
+  sms-transmitter:
+    image: rouddy/sms_transmitter:latest
+    restart: unless-stopped
+    ports:
+      - "54323:54323"
+    environment:
+      # The runtime image has no Rocket.toml, so bind address/port explicitly.
+      ROCKET_ADDRESS: "0.0.0.0"
+      ROCKET_PORT: "54323"
+      DATABASE_URL: "sqlite:///app/db/sms_transmitter.db?mode=rwc"
+      FIREBASE_CREDENTIALS_PATH: "/app/secrets/firebase-credentials.json"
+      AUTH_KEYS_DIR: "/app/keys"
+    volumes:
+      - ../db:/app/db
+      - ../firebase-credentials.json:/app/secrets/firebase-credentials.json:ro
+      # Server only reads public_key.pem (and public_key.previous.pem during rotation).
+      - ../keys:/app/keys:ro

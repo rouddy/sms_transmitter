@@ -37,11 +37,16 @@ spec:
               value: "sqlite:///app/db/sms_transmitter.db?mode=rwc"
             - name: FIREBASE_CREDENTIALS_PATH
               value: "/app/secrets/firebase-credentials.json"
+            - name: AUTH_KEYS_DIR
+              value: "/app/keys"
           volumeMounts:
             - name: db
               mountPath: /app/db
             - name: firebase-credentials
               mountPath: /app/secrets
+              readOnly: true
+            - name: auth-keys
+              mountPath: /app/keys
               readOnly: true
           readinessProbe:
             httpGet:
@@ -68,3 +73,6 @@ spec:
         - name: firebase-credentials
           secret:
             secretName: firebase-credentials
+        - name: auth-keys
+          secret:
+            secretName: auth-public-key
