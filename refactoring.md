@@ -104,6 +104,7 @@
   WHERE assigned_phone_number_id IS NULL AND status = 'Sending';
   ```
 - **검증**: `cargo check`, `cargo clippy`, `cargo test` 통과(기존 21개 전체). 순수 삭제 위주 변경이고 `report_sms_result`는 GraphQL 컨텍스트에 의존하므로 전용 테스트 하네스는 추가하지 않았습니다.
+- **후속 정정 (14번 작업)**: 이 항목에서 정리한 증가 경로는 `Model.into()` 후 `update`가 no-op이라 **카운트가 실제로 저장되지 않고 있었습니다**(정리 이전부터 있던 버그). 테스트 하네스가 없어 당시 발견하지 못했습니다. 14번에서 저장 헬퍼와 메모리 SQLite 기반 resolver 테스트를 추가해 고쳤고, 카운트 갱신 방식도 기기 이력 기준 동기화로 바뀌었습니다. 위의 `match` 구조는 `sentCounts` 유무에 따른 분기로 확장됐으며, 할당된 번호 행이 없을 때의 하드 에러는 warn 로그로 바뀌었습니다.
 
 ### 7. `SettingsActivity` 분리 (Android) — ✅ 완료
 
@@ -150,8 +151,9 @@
   - 서버 보고 로직을 `SmsResultReporter`로 옮겨 서비스와 리시버가 공유합니다.
   - DB 버전 3 → 4, `pending_parts INTEGER NOT NULL DEFAULT 0` 컬럼 추가(기존 행은 0 = 확정). 컬럼 추가 로직을 `addColumnIfNeeded`로 일반화했습니다.
   - 한도 집계(`countSentOrPendingSmsBetweenForSender`, 기존 `countSuccessfulSmsBetweenForSender`)는 성공 행과 **전송 중 행**을 함께 셉니다. 결과 대기 중에 연속 요청이 들어와도 한도를 넘지 않도록 보수적으로 잡았습니다. 이력 목록에는 "전송 중"(주황)으로 표시합니다.
+  - **후속 변경 (14번 작업)**: 집계 함수는 `countSmsBetweenForSender(..., includePending)`로 바뀌었습니다. 로컬 한도·사용량 표시는 `includePending = true`, 서버에 보내는 확정 발신 수(`confirmedSentCounts`)는 `false`를 씁니다. 이력 DB는 `request_id` 컬럼이 추가되며 v5가 됐습니다.
 - **호환성**: 서버 API·스키마 변경은 없습니다. 서버의 `Sending` → `Sent`/`Failed` 전이 시점이 라디오 전달 직후에서 SMSC 접수 결과 수신 시점으로 늦어집니다(보통 수 초).
-- **검증**: `SmsSendResultCodesTest` 3개 추가. `./gradlew :app:compileDebugKotlin`, `./gradlew :app:testDebugUnitTest`(전체 37개), `./gradlew :app:lintDebug` 통과(신규 경고 없음). 파트 집계·리시버·DB 마이그레이션은 `Context`/SQLite에 의존해 단위 테스트하지 않았고, **실기기 발송 테스트(단일/멀티파트, 비행기 모드 등 실패 경로)와 DB 3 → 4 업그레이드는 확인하지 않았습니다.**
+- **검증**: `SmsSendResultCodesTest` 3개 추가. `./gradlew :app:compileDebugKotlin`, `./gradlew :app:testDebugUnitTest`(전체 37개), `./gradlew :app:lintDebug` 통과(신규 경고 없음). 파트 집계·리시버·DB 마이그레이션은 `Context`/SQLite에 의존해 단위 테스트하지 않았고, **실기기 발송 테스트(단일/멀티파트, 비행기 모드 등 실패 경로)와 DB 3 → 4 업그레이드는 확인하지 않았습니다.** (14번 이후 실제 업그레이드 경로는 3 → 5 또는 4 → 5)
 - **후속 확인 필요**:
   - sent 콜백이 끝내 오지 않으면(예: 발송 직후 재부팅) 행이 "전송 중"으로 남아 해당 기간 한도에 계속 포함되고, 서버도 `Sending`에 남습니다. 일정 시간이 지난 전송 중 행을 실패로 확정·보고하는 정리 작업을 검토할 만합니다.
   - 즉시 실패 보고는 여전히 서비스의 `disposables`에 묶여 있어 서비스 `onDestroy`의 `clear()`로 취소될 수 있습니다(7번 후속 항목과 같은 문제). 1번 작업 때 함께 다루는 것이 좋습니다.
