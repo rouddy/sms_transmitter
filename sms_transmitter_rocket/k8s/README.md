@@ -1,7 +1,7 @@
 # Kubernetes 배포 (namespace: `sms-transmitter`)
 
 `roudry/sms_transmitter` 이미지를 **클러스터 내부 전용**으로 배포하는 매니페스트다.
-DB는 PVC로 유지하고, Firebase 서비스 계정 JSON은 Secret으로 주입한다.
+DB는 PVC로 유지하고, Firebase 서비스 계정 JSON과 인증 공개키는 Secret으로 주입한다.
 
 ## 파일 구성
 
@@ -36,7 +36,30 @@ kubectl -n sms-transmitter create secret generic firebase-credentials \
 
 > Secret은 git에 커밋하지 말 것. 이미지에도 포함되지 않는다(`.dockerignore`가 제외).
 
-### 3. 적용
+### 3. 인증 공개키 → Secret
+
+`script/generate_keys.sh`로 만든 키쌍 중 **공개키만** Secret으로 만든다.
+개인키는 서버에 필요 없으므로 클러스터에 올리지 않는다.
+
+```bash
+kubectl -n sms-transmitter create secret generic auth-public-key \
+  --from-file=public_key.pem=./keys/public_key.pem
+```
+
+키 교체(`generate_keys.sh --rotate`) 중에는 이전 공개키도 함께 넣는다:
+
+```bash
+kubectl -n sms-transmitter create secret generic auth-public-key \
+  --from-file=public_key.pem=./keys/public_key.pem \
+  --from-file=public_key.previous.pem=./keys/public_key.previous.pem \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n sms-transmitter rollout restart deployment/sms-transmitter
+```
+
+Secret이 `/app/keys`로 마운트되고 `AUTH_KEYS_DIR`이 그 경로를 가리킨다.
+`public_key.pem`이 없으면 서버가 시작되지 않는다.
+
+### 4. 적용
 
 ```bash
 kubectl apply -f k8s/namespace.yaml
@@ -72,6 +95,8 @@ http://sms-transmitter.sms-transmitter.svc.cluster.local:54323
 ```
 
 GraphiQL UI: `http://sms-transmitter.sms-transmitter.svc.cluster.local:54323/graphiql`
+
+`/graphql` 호출에는 `Authorization: Bearer <JWT>` 헤더가 필요하다(`script/make_jwt.sh`로 생성).
 
 ## 주의
 

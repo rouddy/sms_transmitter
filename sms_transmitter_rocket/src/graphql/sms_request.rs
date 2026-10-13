@@ -83,7 +83,10 @@ mod tests {
             (sms_request::SmsStatus::Failed, "FAILED"),
         ] {
             let status = SmsStatus::from(status);
-            assert_eq!(status.to_value(), Value::Enum(async_graphql::Name::new(expected)));
+            assert_eq!(
+                status.to_value(),
+                Value::Enum(async_graphql::Name::new(expected))
+            );
         }
     }
 }
@@ -285,7 +288,8 @@ impl SmsRequestMutation {
         if let Some(callback_url) = callback_url {
             match invoke_callback_url(&callback_url).await {
                 Ok(response) => {
-                    save_callback_response(db, request_id, response.status_code, response.body).await;
+                    save_callback_response(db, request_id, response.status_code, response.body)
+                        .await;
                     if !response.is_success {
                         tracing::error!(
                             "Callback URL returned non-success status for request {:?}: {}",

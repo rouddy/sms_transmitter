@@ -74,7 +74,10 @@ mod tests {
             (SmsStatus::Failed, "Failed"),
         ] {
             assert_eq!(status.to_value(), value);
-            assert_eq!(SmsStatus::try_from_value(&value.to_string()).unwrap(), status);
+            assert_eq!(
+                SmsStatus::try_from_value(&value.to_string()).unwrap(),
+                status
+            );
         }
     }
 

@@ -30,4 +30,9 @@ WORKDIR /app
 
 COPY --from=builder /app/target/release/sms_transmitter_rocket /app/sms_transmitter_rocket
 
+# Auth key pair is never baked into the image; mount the directory created by
+# script/generate_keys.sh here (only public_key.pem is required on the server).
+ENV AUTH_KEYS_DIR=/app/keys
+VOLUME ["/app/keys"]
+
 ENTRYPOINT ["/app/sms_transmitter_rocket"]
