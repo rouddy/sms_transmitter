@@ -22,7 +22,7 @@
 | P1 | ✅ 설정 마이그레이션 잔재 정리 (완료) | Android | legacy 읽기·쓰기 제거, JSON 단일 소스 |
 | P1 | ✅ 피드백 응답시 발신 카운트 증가 분기 (완료) | Rocket | fallback 경로 제거, 단일 경로로 정리 |
 | P1 | ✅ `SettingsActivity` 분리 (완료) | Android | 폼·파싱·오버레이·서버 등록 책임 분리 |
-| P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
+| P2 | ✅ Retrofit 인스턴스 무한 캐시 (완료) | Android | 최대 4개 LRU 캐시로 제한 |
 | P2 | `notifyDataSetChanged()` → DiffUtil | Android | RecyclerView 성능 |
 | P2 | ✅ `sendTextMessage` 전송 결과 확인 부재 (완료) | Android | sent PendingIntent 결과 기준으로 보고 |
 | P2 | ✅ 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 (완료) | Rocket | `firebase.rs` |
@@ -123,11 +123,13 @@
 
 ## P2 — 낮은 우선순위
 
-### 8. Retrofit 인스턴스 무한 캐시 (Android)
+### 8. Retrofit 인스턴스 무한 캐시 (Android) — ✅ 완료
 
-- **위치**: `RetrofitClientProvider.kt`
-- **문제**: `cache: mutableMapOf<String, Retrofit>`이 baseUrl 변경 시 계속 누적되어, URL을 자주 바꾸면 인스턴스가 무한히 쌓입니다(현재 규모에서는 미미하지만 원칙상 위험).
-- **개선 방향**: 고정 크기 LRU, 또는 실행 중 서버 URL 변경이 드물다는 전제 하에 마지막 1개만 유지하도록 단순화합니다.
+- **위치**: `sms_transmitter_Android/.../RetrofitClientProvider.kt`
+- **기존 문제**: `cache: mutableMapOf<String, Retrofit>`가 baseUrl마다 인스턴스를 쌓기만 하고 비우지 않았습니다.
+- **적용 내용**: 접근 순서(`accessOrder = true`) `LinkedHashMap` + `removeEldestEntry`로 **최대 4개 LRU**로 제한했습니다. 기존 `@Synchronized`가 접근 순서 갱신까지 보호합니다. `OkHttpClient`는 기존처럼 하나를 공유하므로, 제거되는 것은 가벼운 Retrofit 래퍼뿐이고 커넥션 풀은 유지됩니다.
+- **"마지막 1개만 유지"를 택하지 않은 이유**: 설정에서 서버 URL을 바꾸면 이전 서버에서 토큰 삭제, 새 서버에 등록이 연달아 실행됩니다(`FcmTokenRegistrar.registerAfterServerChange`). 1개만 유지하면 이 흐름에서 매번 인스턴스를 다시 만들게 되므로 작은 여유를 두었습니다.
+- **검증**: `RetrofitClientProviderTest` 2개(같은 URL 재사용, 한도 초과 시 가장 오래 쓰지 않은 항목 제거) 추가. 테스트용으로 `cachedBaseUrls()`/`clearCache()`를 `@VisibleForTesting internal`로 노출했습니다. `./gradlew :app:testDebugUnitTest` 통과(전체 39개).
 
 ### 9. `notifyDataSetChanged()` → `DiffUtil` (Android)
 
