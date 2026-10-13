@@ -47,10 +47,10 @@ class SmsHistoryAdapter(
             textReceiver.text = "수신번호: ${item.phoneNumber}"
             textMessage.text = "메시지: ${item.message}"
 
-            val smsStatus = if (item.smsSuccess) {
-                context.getString(R.string.sms_success)
-            } else {
-                context.getString(R.string.sms_failure)
+            val smsStatus = when {
+                item.smsPending -> context.getString(R.string.sms_pending)
+                item.smsSuccess -> context.getString(R.string.sms_success)
+                else -> context.getString(R.string.sms_failure)
             }
             
             val statusText = buildString {
@@ -61,10 +61,10 @@ class SmsHistoryAdapter(
             }
             textStatus.text = statusText
             
-            val statusColor = if (item.smsSuccess) {
-                android.R.color.holo_green_dark
-            } else {
-                android.R.color.holo_red_dark
+            val statusColor = when {
+                item.smsPending -> android.R.color.holo_orange_dark
+                item.smsSuccess -> android.R.color.holo_green_dark
+                else -> android.R.color.holo_red_dark
             }
             textStatus.setTextColor(ContextCompat.getColor(context, statusColor))
         }

@@ -13,20 +13,25 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
 ) {
     override fun onCreate(db: SQLiteDatabase) {
         createSmsHistoryTableIfNotExists(db)
-        addSenderPhoneNumberColumnIfNeeded(db)
+        addMissingColumns(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         createSmsHistoryTableIfNotExists(db)
-        addSenderPhoneNumberColumnIfNeeded(db)
+        addMissingColumns(db)
     }
 
+    /**
+     * Inserts a history row. Pass [pendingParts] > 0 for a message handed to the radio whose
+     * per-part sent results are still outstanding; see [recordSentPartResult].
+     */
     fun insertSmsHistory(
         senderPhoneNumber: String,
         phoneNumber: String,
         message: String,
         smsSuccess: Boolean,
-        smsError: String?
+        smsError: String?,
+        pendingParts: Int = 0,
     ): Long {
         val values = ContentValues().apply {
             put(COLUMN_CREATED_AT, System.currentTimeMillis())
@@ -35,8 +40,52 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
             put(COLUMN_MESSAGE, message)
             put(COLUMN_SMS_SUCCESS, if (smsSuccess) 1 else 0)
             put(COLUMN_SMS_ERROR, smsError)
+            put(COLUMN_PENDING_PARTS, pendingParts)
         }
         return writableDatabase.insert(TABLE_SMS_HISTORY, null, values)
+    }
+
+    /**
+     * Records the sent result of one part of a pending message. The first part error is kept.
+     * Returns the final result once the last outstanding part is recorded, otherwise null
+     * (including for unknown or already finalized rows, so duplicate callbacks are ignored).
+     */
+    fun recordSentPartResult(historyId: Long, partError: String?): SendSmsResult? {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val (pendingParts, currentError) = db.rawQuery(
+                "SELECT $COLUMN_PENDING_PARTS, $COLUMN_SMS_ERROR FROM $TABLE_SMS_HISTORY WHERE $COLUMN_ID = ?",
+                arrayOf(historyId.toString())
+            ).use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                cursor.getInt(0) to cursor.getString(1)
+            }
+            if (pendingParts <= 0) return null
+
+            val remainingParts = pendingParts - 1
+            val error = currentError ?: partError
+            val values = ContentValues().apply {
+                put(COLUMN_PENDING_PARTS, remainingParts)
+                put(COLUMN_SMS_ERROR, error)
+                if (remainingParts == 0) put(COLUMN_SMS_SUCCESS, if (error == null) 1 else 0)
+            }
+            db.update(TABLE_SMS_HISTORY, values, "$COLUMN_ID = ?", arrayOf(historyId.toString()))
+            db.setTransactionSuccessful()
+            return if (remainingParts == 0) SendSmsResult(success = error == null, error = error) else null
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Finalizes a pending message as failed, e.g. when handing it to the radio threw. */
+    fun markSmsFailed(historyId: Long, smsError: String) {
+        val values = ContentValues().apply {
+            put(COLUMN_PENDING_PARTS, 0)
+            put(COLUMN_SMS_SUCCESS, 0)
+            put(COLUMN_SMS_ERROR, smsError)
+        }
+        writableDatabase.update(TABLE_SMS_HISTORY, values, "$COLUMN_ID = ?", arrayOf(historyId.toString()))
     }
 
     fun getRecentSmsHistories(limit: Int = 100): List<SmsHistoryItem> {
@@ -47,7 +96,8 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
                 $COLUMN_PHONE_NUMBER,
                 $COLUMN_MESSAGE,
                 $COLUMN_SMS_SUCCESS,
-                $COLUMN_SMS_ERROR
+                $COLUMN_SMS_ERROR,
+                $COLUMN_PENDING_PARTS
             FROM $TABLE_SMS_HISTORY
             ORDER BY $COLUMN_CREATED_AT DESC
             LIMIT ?
@@ -62,14 +112,19 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
                     phoneNumber = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_PHONE_NUMBER)),
                     message = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_MESSAGE)),
                     smsSuccess = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_SMS_SUCCESS)) == 1,
-                    smsError = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_SMS_ERROR))
+                    smsError = cursor.getString(cursor.getColumnIndexOrThrow(COLUMN_SMS_ERROR)),
+                    smsPending = cursor.getInt(cursor.getColumnIndexOrThrow(COLUMN_PENDING_PARTS)) > 0,
                 )
             }
             items
         }
     }
 
-    fun countSuccessfulSmsBetweenForSender(
+    /**
+     * Counts successful and still pending messages, so in-flight messages count toward limits
+     * until their sent result arrives.
+     */
+    fun countSentOrPendingSmsBetweenForSender(
         senderPhoneNumber: String,
         startMillisInclusive: Long,
         endMillisExclusive: Long
@@ -77,7 +132,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         val query = """
             SELECT COUNT(*)
             FROM $TABLE_SMS_HISTORY
-            WHERE $COLUMN_SMS_SUCCESS = 1
+            WHERE ($COLUMN_SMS_SUCCESS = 1 OR $COLUMN_PENDING_PARTS > 0)
               AND $COLUMN_SENDER_PHONE_NUMBER = ?
               AND $COLUMN_CREATED_AT >= ?
               AND $COLUMN_CREATED_AT < ?
@@ -93,7 +148,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val DATABASE_NAME = "sms_history.db"
-        private const val DATABASE_VERSION = 3
+        private const val DATABASE_VERSION = 4
 
         private const val TABLE_SMS_HISTORY = "sms_history"
         private const val COLUMN_ID = "id"
@@ -103,6 +158,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         private const val COLUMN_MESSAGE = "message"
         private const val COLUMN_SMS_SUCCESS = "sms_success"
         private const val COLUMN_SMS_ERROR = "sms_error"
+        private const val COLUMN_PENDING_PARTS = "pending_parts"
     }
 
     private fun createSmsHistoryTableIfNotExists(db: SQLiteDatabase) {
@@ -115,18 +171,24 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
                 $COLUMN_PHONE_NUMBER TEXT NOT NULL,
                 $COLUMN_MESSAGE TEXT NOT NULL,
                 $COLUMN_SMS_SUCCESS INTEGER NOT NULL,
-                $COLUMN_SMS_ERROR TEXT
+                $COLUMN_SMS_ERROR TEXT,
+                $COLUMN_PENDING_PARTS INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent()
         )
     }
 
-    private fun addSenderPhoneNumberColumnIfNeeded(db: SQLiteDatabase) {
+    private fun addMissingColumns(db: SQLiteDatabase) {
+        addColumnIfNeeded(db, COLUMN_SENDER_PHONE_NUMBER, "TEXT")
+        addColumnIfNeeded(db, COLUMN_PENDING_PARTS, "INTEGER NOT NULL DEFAULT 0")
+    }
+
+    private fun addColumnIfNeeded(db: SQLiteDatabase, column: String, definition: String) {
         val hasColumn = db.rawQuery("PRAGMA table_info($TABLE_SMS_HISTORY)", null).use { cursor ->
             val nameIndex = cursor.getColumnIndex("name")
             var found = false
             while (cursor.moveToNext()) {
-                if (cursor.getString(nameIndex) == COLUMN_SENDER_PHONE_NUMBER) {
+                if (cursor.getString(nameIndex) == column) {
                     found = true
                     break
                 }
@@ -134,9 +196,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
             found
         }
         if (!hasColumn) {
-            db.execSQL(
-                "ALTER TABLE $TABLE_SMS_HISTORY ADD COLUMN $COLUMN_SENDER_PHONE_NUMBER TEXT"
-            )
+            db.execSQL("ALTER TABLE $TABLE_SMS_HISTORY ADD COLUMN $column $definition")
         }
     }
 }
@@ -147,5 +207,6 @@ data class SmsHistoryItem(
     val phoneNumber: String,
     val message: String,
     val smsSuccess: Boolean,
-    val smsError: String?
+    val smsError: String?,
+    val smsPending: Boolean,
 )

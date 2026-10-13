@@ -10,14 +10,14 @@ import java.util.Calendar
  */
 object SmsUsageCalculator {
     fun sentToday(db: SmsHistoryDatabase, senderPhoneNumber: String, nowMillis: Long): Int =
-        db.countSuccessfulSmsBetweenForSender(
+        db.countSentOrPendingSmsBetweenForSender(
             senderPhoneNumber,
             startOfTodayMillis(nowMillis),
             startOfNextDayMillis(nowMillis),
         )
 
     fun sentThisMonth(db: SmsHistoryDatabase, senderPhoneNumber: String, nowMillis: Long): Int =
-        db.countSuccessfulSmsBetweenForSender(
+        db.countSentOrPendingSmsBetweenForSender(
             senderPhoneNumber,
             startOfMonthMillis(nowMillis),
             startOfNextMonthMillis(nowMillis),

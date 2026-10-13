@@ -40,6 +40,9 @@
         <service
             android:name=".UsageOverlayService"
             android:exported="false" />
+        <receiver
+            android:name=".SmsSentReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

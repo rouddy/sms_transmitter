@@ -13,7 +13,6 @@ import androidx.core.content.ContextCompat
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import io.reactivex.rxjava3.disposables.CompositeDisposable
-import io.reactivex.rxjava3.schedulers.Schedulers
 
 class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
@@ -34,59 +33,76 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
         val historyDb = SmsHistoryDatabase(applicationContext)
         try {
-            val smsResult = sendSmsSafely(
-                senderPhoneNumber = payload.senderPhoneNumber,
-                destinationPhoneNumber = payload.phoneNumber,
-                message = payload.message,
-                historyDb = historyDb
-            )
-            historyDb.insertSmsHistory(
-                senderPhoneNumber = payload.senderPhoneNumber,
-                phoneNumber = payload.phoneNumber,
-                message = payload.message,
-                smsSuccess = smsResult.success,
-                smsError = smsResult.error
-            )
-            reportSmsResultSafely(payload.requestId, smsResult)
+            val failure = sendSmsSafely(payload, historyDb) ?: return
+            SmsResultReporter.report(applicationContext, payload.requestId, failure)?.let { disposables.add(it) }
         } finally {
             historyDb.close()
         }
     }
 
-    private fun sendSmsSafely(
-        senderPhoneNumber: String,
-        destinationPhoneNumber: String,
-        message: String,
-        historyDb: SmsHistoryDatabase
-    ): SendSmsResult {
-        if (destinationPhoneNumber.isBlank()) {
-            Log.w(TAG, "Destination phone number is not configured.")
-            return SendSmsResult(success = false, error = "Destination phone number is empty.")
-        }
-        if (!hasSmsPermission()) {
-            Log.w(TAG, "SEND_SMS permission not granted.")
-            return SendSmsResult(success = false, error = "SEND_SMS permission not granted.")
-        }
-        checkLimitReachedError(historyDb, senderPhoneNumber)?.let { limitError ->
-            Log.w(TAG, limitError)
-            return SendSmsResult(success = false, error = limitError)
+    /**
+     * Records the message in history and hands it to the radio. Returns null once handed off:
+     * the radio reports a sent result per part, and [SmsSentReceiver] finalizes the history row
+     * and reports to the server. Returns the failure if the message could not be handed off.
+     */
+    private fun sendSmsSafely(payload: FcmPayload, historyDb: SmsHistoryDatabase): SendSmsResult? {
+        checkPreconditionError(historyDb, payload)?.let { error ->
+            Log.w(TAG, error)
+            historyDb.insertSmsHistory(
+                senderPhoneNumber = payload.senderPhoneNumber,
+                phoneNumber = payload.phoneNumber,
+                message = payload.message,
+                smsSuccess = false,
+                smsError = error
+            )
+            return SendSmsResult(success = false, error = error)
         }
 
+        var historyId = -1L
         return runCatching {
-            // Kotlin 예시
-            val smsManager = getSmsManager(senderPhoneNumber)
-            val messageParts = smsManager.divideMessage(message)
-            if (messageParts.size > 1) {
-                smsManager.sendMultipartTextMessage(destinationPhoneNumber, null, messageParts, null, null)
-            } else {
-                smsManager.sendTextMessage(destinationPhoneNumber, null, message, null, null)
+            val smsManager = getSmsManager(payload.senderPhoneNumber)
+            val messageParts = smsManager.divideMessage(payload.message)
+            historyId = historyDb.insertSmsHistory(
+                senderPhoneNumber = payload.senderPhoneNumber,
+                phoneNumber = payload.phoneNumber,
+                message = payload.message,
+                smsSuccess = false,
+                smsError = null,
+                pendingParts = messageParts.size
+            )
+            check(historyId != -1L) { "Failed to record SMS history." }
+
+            val sentIntents = messageParts.indices.map { partIndex ->
+                SmsSentReceiver.sentIntent(this, historyId, partIndex, payload.requestId)
             }
-            SendSmsResult(success = true, error = null)
-        }.onFailure {
-            Log.e(TAG, "Failed to send SMS.", it)
+            if (messageParts.size > 1) {
+                smsManager.sendMultipartTextMessage(payload.phoneNumber, null, messageParts, ArrayList(sentIntents), null)
+            } else {
+                smsManager.sendTextMessage(payload.phoneNumber, null, payload.message, sentIntents.single(), null)
+            }
+            null
         }.getOrElse {
-            SendSmsResult(success = false, error = it.message ?: "Failed to send SMS.")
+            Log.e(TAG, "Failed to send SMS.", it)
+            val error = it.message ?: "Failed to send SMS."
+            if (historyId != -1L) {
+                historyDb.markSmsFailed(historyId, error)
+            } else {
+                historyDb.insertSmsHistory(
+                    senderPhoneNumber = payload.senderPhoneNumber,
+                    phoneNumber = payload.phoneNumber,
+                    message = payload.message,
+                    smsSuccess = false,
+                    smsError = error
+                )
+            }
+            SendSmsResult(success = false, error = error)
         }
+    }
+
+    private fun checkPreconditionError(historyDb: SmsHistoryDatabase, payload: FcmPayload): String? {
+        if (payload.phoneNumber.isBlank()) return "Destination phone number is empty."
+        if (!hasSmsPermission()) return "SEND_SMS permission not granted."
+        return checkLimitReachedError(historyDb, payload.senderPhoneNumber)
     }
 
     private fun getSmsManager(senderPhoneNumber: String): SmsManager {
@@ -139,24 +155,6 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         return null
     }
 
-    private fun reportSmsResultSafely(requestId: String?, smsResult: SendSmsResult) {
-        if (requestId.isNullOrBlank()) return
-        val config = SmsLimitSettings(applicationContext).getConfig()
-        val serverUrl = config.serverUrl ?: return
-
-        val disposable = GraphQlClient("$serverUrl/").reportSmsResult(
-            requestId = requestId,
-            success = smsResult.success,
-            error = smsResult.error,
-        )
-            .subscribeOn(Schedulers.io())
-            .subscribe(
-                { Log.i(TAG, "SMS result reported to server for requestId=$requestId success=${smsResult.success}") },
-                { Log.e(TAG, "Failed to report SMS result to server for requestId=$requestId", it) },
-            )
-        disposables.add(disposable)
-    }
-
     override fun onDestroy() {
         disposables.clear()
         super.onDestroy()
@@ -171,8 +169,3 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         private const val TAG = "FirebaseSmsService"
     }
 }
-
-private data class SendSmsResult(
-    val success: Boolean,
-    val error: String?
-)

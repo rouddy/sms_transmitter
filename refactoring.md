@@ -24,7 +24,7 @@
 | P1 | ✅ `SettingsActivity` 분리 (완료) | Android | 폼·파싱·오버레이·서버 등록 책임 분리 |
 | P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
 | P2 | `notifyDataSetChanged()` → DiffUtil | Android | RecyclerView 성능 |
-| P2 | `sendTextMessage` 전송 결과 확인 부재 | Android | "성공" != 실제 수신 |
+| P2 | ✅ `sendTextMessage` 전송 결과 확인 부재 (완료) | Android | sent PendingIntent 결과 기준으로 보고 |
 | P2 | ✅ 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 (완료) | Rocket | `firebase.rs` |
 | P2 | 빌드타임 로컬 IP 감지 | Android | `build.gradle.kts` |
 | P2 | 부가 정리 | Rocket | `db.rs`·매직 상수·정규화 공유 |
@@ -135,11 +135,24 @@
 - **문제**: 목록 갱신 시 전체 리바인딩을 유발합니다.
 - **개선 방향**: `ListAdapter` + `DiffUtil.ItemCallback`로 교체합니다(갱신이 잦지는 않지만 관례상 개선 여지).
 
-### 10. `sendTextMessage` 전송 결과 확인 부재 (Android)
+### 10. `sendTextMessage` 전송 결과 확인 부재 (Android) — ✅ 완료
 
-- **위치**: `FirebaseMessageReceiverService.kt` `sendSmsSafely`
-- **문제**: `sendTextMessage`/`sendMultipartTextMessage`를 PendingIntent(sent/delivered) 없이 호출해 "라디오에 전달됨"을 곧 "성공"으로 처리합니다. 실제 수신·실패 여부가 반영되지 않아 서버에 잘못된 `success=true`를 보고할 수 있습니다.
-- **개선 방향**: sent/delivered PendingIntent를 전달해 결과를 비동기로 수신하고, 그 결과를 기준으로 `reportSmsResult`를 호출하도록 변경합니다(정확성 개선이므로 사실상 P0에 가까운 논의 대상).
+- **위치**: `FirebaseMessageReceiverService.kt`, `SmsSentReceiver.kt`(신규), `SmsSendResult.kt`(신규), `SmsResultReporter.kt`(신규), `SmsHistoryDatabase.kt`, `SmsHistoryAdapter.kt`, `AndroidManifest.xml`
+- **기존 문제**: `sendTextMessage`/`sendMultipartTextMessage`를 PendingIntent 없이 호출해, 예외 없이 라디오에 넘기기만 하면 즉시 `success=true`로 이력을 남기고 서버에 보고했습니다. 무선 꺼짐·서비스 없음·SMSC 거부 같은 실제 전송 실패가 성공으로 집계됐습니다.
+- **성공 기준**: **sent 결과(`RESULT_OK` = SMSC 접수)**를 성공으로 봅니다. delivered(수신 단말 도달) 리포트는 사용하지 않았습니다. 통신사·단말에 따라 오지 않는 경우가 있어 이를 기다리면 서버 상태가 `Sending`에 영구히 남을 수 있기 때문입니다.
+- **적용 내용**:
+  - 발송 전 이력 행을 `pending_parts = 분할 개수`로 먼저 기록하고, 파트마다 `SmsSentReceiver`로 가는 sent PendingIntent를 전달합니다. PendingIntent는 extras를 동일성 비교에 쓰지 않으므로 파트별 data URI로 구분하고, `FLAG_IMMUTABLE | FLAG_ONE_SHOT`을 사용합니다.
+  - `SmsSentReceiver`(manifest 등록, `exported=false`)는 FCM 서비스가 종료된 뒤에도 결과를 받습니다. `SmsHistoryDatabase.recordSentPartResult`가 트랜잭션 안에서 남은 파트를 줄이고 첫 오류를 보존하며, 마지막 파트에서만 최종 결과를 돌려줍니다. 이미 확정된 행에 대한 중복 콜백은 무시합니다. 최종 결과가 나오면 `goAsync()`로 서버 보고가 끝날 때까지 브로드캐스트를 유지합니다.
+  - 결과 코드는 `SmsSendResultCodes`가 원인 문자열로 바꿉니다(알려진 코드는 이름, 그 외는 코드값). `FLAG_IMMUTABLE`이라 시스템의 `errorCode` extra는 받지 않고 결과 코드만 사용합니다.
+  - 사전 조건 실패(수신번호 없음·권한 없음·한도 도달)와 라디오 전달 단계의 예외는 기존처럼 즉시 실패로 기록·보고합니다. 이력 행을 만든 뒤 예외가 나면 `markSmsFailed`로 확정합니다.
+  - 서버 보고 로직을 `SmsResultReporter`로 옮겨 서비스와 리시버가 공유합니다.
+  - DB 버전 3 → 4, `pending_parts INTEGER NOT NULL DEFAULT 0` 컬럼 추가(기존 행은 0 = 확정). 컬럼 추가 로직을 `addColumnIfNeeded`로 일반화했습니다.
+  - 한도 집계(`countSentOrPendingSmsBetweenForSender`, 기존 `countSuccessfulSmsBetweenForSender`)는 성공 행과 **전송 중 행**을 함께 셉니다. 결과 대기 중에 연속 요청이 들어와도 한도를 넘지 않도록 보수적으로 잡았습니다. 이력 목록에는 "전송 중"(주황)으로 표시합니다.
+- **호환성**: 서버 API·스키마 변경은 없습니다. 서버의 `Sending` → `Sent`/`Failed` 전이 시점이 라디오 전달 직후에서 SMSC 접수 결과 수신 시점으로 늦어집니다(보통 수 초).
+- **검증**: `SmsSendResultCodesTest` 3개 추가. `./gradlew :app:compileDebugKotlin`, `./gradlew :app:testDebugUnitTest`(전체 37개), `./gradlew :app:lintDebug` 통과(신규 경고 없음). 파트 집계·리시버·DB 마이그레이션은 `Context`/SQLite에 의존해 단위 테스트하지 않았고, **실기기 발송 테스트(단일/멀티파트, 비행기 모드 등 실패 경로)와 DB 3 → 4 업그레이드는 확인하지 않았습니다.**
+- **후속 확인 필요**:
+  - sent 콜백이 끝내 오지 않으면(예: 발송 직후 재부팅) 행이 "전송 중"으로 남아 해당 기간 한도에 계속 포함되고, 서버도 `Sending`에 남습니다. 일정 시간이 지난 전송 중 행을 실패로 확정·보고하는 정리 작업을 검토할 만합니다.
+  - 즉시 실패 보고는 여전히 서비스의 `disposables`에 묶여 있어 서비스 `onDestroy`의 `clear()`로 취소될 수 있습니다(7번 후속 항목과 같은 문제). 1번 작업 때 함께 다루는 것이 좋습니다.
 
 ### 11. 토큰 뮤텍스 홀딩 & HTTP 타임아웃 부재 (Rocket) — ✅ 완료
 
@@ -198,4 +211,4 @@
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).
 5. **멱등성**: 결과 보고 멱등성(14) — 서버 가드를 먼저 넣고 Android 중복 제거를 뒤따르게 하는 것이 안전합니다.
 
-> 참고: `sendTextMessage` 전송 결과 확인(10)은 "리팩토링"이라기보다 정확성 이슈이므로 단독으로 다루는 편이 안전합니다.
+> 참고: `sendTextMessage` 전송 결과 확인(10)은 정확성 이슈라 단독으로 처리했습니다(완료).
