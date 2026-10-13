@@ -10,12 +10,14 @@ object SmsResultReporter {
     private const val TAG = "SmsResultReporter"
 
     /**
-     * Reports [result] for [requestId]. [onComplete] runs once the report finishes, fails or
-     * is skipped (no request ID or server URL), so callers can release a pending broadcast.
+     * Reports [result] for [requestId] with the confirmed sent counts of [senderPhoneNumber].
+     * [onComplete] runs once the report finishes, fails or is skipped (no request ID or server
+     * URL), so callers can release a pending broadcast.
      */
     fun report(
         context: Context,
         requestId: String?,
+        senderPhoneNumber: String?,
         result: SendSmsResult,
         onComplete: () -> Unit = {},
     ): Disposable? {
@@ -28,10 +30,15 @@ object SmsResultReporter {
             return null
         }
 
+        val sentCounts = senderPhoneNumber?.let {
+            SmsUsageCalculator.confirmedSentCounts(context, listOf(it)).getValue(it)
+        }
+
         return GraphQlClient("$serverUrl/").reportSmsResult(
             requestId = requestId,
             success = result.success,
             error = result.error,
+            sentCounts = sentCounts,
         )
             .subscribeOn(Schedulers.io())
             .doFinally(onComplete)

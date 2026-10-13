@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
+use crate::graphql::phone_number::SentCountsInput;
 
 const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
 
@@ -103,6 +104,9 @@ pub struct ReportSmsResultInput {
     pub request_id: ID,
     pub success: bool,
     pub error: Option<String>,
+    /// Sender's sent counts after this result. Omitted by older app versions, in which
+    /// case a successful report increments the counts instead.
+    pub sent_counts: Option<SentCountsInput>,
 }
 
 #[derive(Default)]
@@ -239,24 +243,37 @@ impl SmsRequestMutation {
             .await?
             .ok_or_else(|| async_graphql::Error::new("SMS request not found"))?;
 
-        if input.success {
+        let is_first_report = request.status == sms_request::SmsStatus::Sending;
+        if input.sent_counts.is_some() || (input.success && is_first_report) {
             // `request_sms`는 항상 `assigned_phone_number_id`를 채운다. NULL인 행은
             // m20260813_000004(한도를 번호 단위로 이전) 이전에 생성돼 백필 시 NULL로
-            // 남은 요청뿐이며, 증가시킬 번호를 특정할 수 없으므로 카운트를 생략한다.
+            // 남은 요청뿐이며, 갱신할 번호를 특정할 수 없으므로 카운트를 생략한다.
             match request.assigned_phone_number_id {
                 Some(phone_number_id) => {
-                    let mut phone_number_model = phone_number::Entity::find_by_id(phone_number_id)
+                    match phone_number::Entity::find_by_id(phone_number_id)
                         .one(&txn)
                         .await?
-                        .ok_or_else(|| {
-                            async_graphql::Error::new("assigned phone number not found")
-                        })?;
-                    phone_number_model.increment_sent_counts(now.date());
-                    let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
-                    phone_number_active.update(&txn).await?;
+                    {
+                        Some(mut phone_number_model) => {
+                            match input.sent_counts {
+                                // 기기 이력 기준으로 맞추므로 중복 보고에도 안전하다.
+                                Some(counts) => phone_number_model
+                                    .merge_reported_sent_counts(counts.into(), now.date()),
+                                // 카운트를 보내지 않는 구버전 앱: 첫 성공 보고에서만 증가.
+                                None => phone_number_model.increment_sent_counts(now.date()),
+                            }
+                            phone_number_model
+                                .into_sent_counts_active_model()
+                                .update(&txn)
+                                .await?;
+                        }
+                        None => tracing::warn!(
+                            "Assigned phone number {phone_number_id} of SMS request {request_id} no longer exists; skipping sent-count update"
+                        ),
+                    }
                 }
                 None => tracing::warn!(
-                    "SMS request {request_id} has no assigned phone number; skipping sent-count increment"
+                    "SMS request {request_id} has no assigned phone number; skipping sent-count update"
                 ),
             }
         }
@@ -269,6 +286,17 @@ impl SmsRequestMutation {
                     tracing::error!("Failed to update last_access_time for token {token_id}: {e}");
                 }
             }
+        }
+
+        // FCM은 at-least-once 전달이라 같은 요청이 여러 번 보고될 수 있다. 상태 전이와
+        // 콜백은 첫 보고에서만 수행하고, 이후 보고는 카운트 동기화만 한 뒤 성공으로 응답한다.
+        if !is_first_report {
+            tracing::info!(
+                "SMS request {request_id} already finalized as {:?}; ignoring repeated result report",
+                request.status
+            );
+            txn.commit().await?;
+            return Ok(true);
         }
 
         let callback_url = request.callback_url.clone();

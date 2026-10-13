@@ -33,8 +33,14 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
 
         val historyDb = SmsHistoryDatabase(applicationContext)
         try {
+            // FCM delivers at least once, so the same request can arrive again.
+            if (payload.requestId != null && historyDb.hasSmsHistoryForRequest(payload.requestId)) {
+                Log.i(TAG, "Ignoring duplicate FCM message for requestId=${payload.requestId}")
+                return
+            }
             val failure = sendSmsSafely(payload, historyDb) ?: return
-            SmsResultReporter.report(applicationContext, payload.requestId, failure)?.let { disposables.add(it) }
+            SmsResultReporter.report(applicationContext, payload.requestId, payload.senderPhoneNumber, failure)
+                ?.let { disposables.add(it) }
         } finally {
             historyDb.close()
         }
@@ -49,6 +55,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
         checkPreconditionError(historyDb, payload)?.let { error ->
             Log.w(TAG, error)
             historyDb.insertSmsHistory(
+                requestId = payload.requestId,
                 senderPhoneNumber = payload.senderPhoneNumber,
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
@@ -63,6 +70,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             val smsManager = getSmsManager(payload.senderPhoneNumber)
             val messageParts = smsManager.divideMessage(payload.message)
             historyId = historyDb.insertSmsHistory(
+                requestId = payload.requestId,
                 senderPhoneNumber = payload.senderPhoneNumber,
                 phoneNumber = payload.phoneNumber,
                 message = payload.message,
@@ -73,7 +81,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
             check(historyId != -1L) { "Failed to record SMS history." }
 
             val sentIntents = messageParts.indices.map { partIndex ->
-                SmsSentReceiver.sentIntent(this, historyId, partIndex, payload.requestId)
+                SmsSentReceiver.sentIntent(this, historyId, partIndex, payload.requestId, payload.senderPhoneNumber)
             }
             if (messageParts.size > 1) {
                 smsManager.sendMultipartTextMessage(payload.phoneNumber, null, messageParts, ArrayList(sentIntents), null)
@@ -88,6 +96,7 @@ class FirebaseMessageReceiverService : FirebaseMessagingService() {
                 historyDb.markSmsFailed(historyId, error)
             } else {
                 historyDb.insertSmsHistory(
+                    requestId = payload.requestId,
                     senderPhoneNumber = payload.senderPhoneNumber,
                     phoneNumber = payload.phoneNumber,
                     message = payload.message,

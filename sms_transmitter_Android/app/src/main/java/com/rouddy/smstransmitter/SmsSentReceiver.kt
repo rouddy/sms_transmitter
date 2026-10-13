@@ -18,6 +18,7 @@ class SmsSentReceiver : BroadcastReceiver() {
         val historyId = intent.getLongExtra(EXTRA_HISTORY_ID, -1L)
         if (historyId < 0) return
         val requestId = intent.getStringExtra(EXTRA_REQUEST_ID)
+        val senderPhoneNumber = intent.getStringExtra(EXTRA_SENDER_PHONE_NUMBER)
 
         val partResult = SmsSendResultCodes.toResult(resultCode)
         if (!partResult.success) {
@@ -33,7 +34,7 @@ class SmsSentReceiver : BroadcastReceiver() {
 
         Log.i(TAG, "SMS send finished for historyId=$historyId requestId=$requestId success=${finalResult.success}")
         val pendingResult = goAsync()
-        SmsResultReporter.report(context.applicationContext, requestId, finalResult) {
+        SmsResultReporter.report(context.applicationContext, requestId, senderPhoneNumber, finalResult) {
             pendingResult.finish()
         }
     }
@@ -43,15 +44,23 @@ class SmsSentReceiver : BroadcastReceiver() {
         private const val ACTION_SMS_SENT = "com.rouddy.smstransmitter.action.SMS_SENT"
         private const val EXTRA_HISTORY_ID = "historyId"
         private const val EXTRA_REQUEST_ID = "requestId"
+        private const val EXTRA_SENDER_PHONE_NUMBER = "senderPhoneNumber"
 
         /** Builds the sent [PendingIntent] for one part of the message stored as [historyId]. */
-        fun sentIntent(context: Context, historyId: Long, partIndex: Int, requestId: String?): PendingIntent {
+        fun sentIntent(
+            context: Context,
+            historyId: Long,
+            partIndex: Int,
+            requestId: String?,
+            senderPhoneNumber: String,
+        ): PendingIntent {
             val intent = Intent(context, SmsSentReceiver::class.java).apply {
                 action = ACTION_SMS_SENT
                 // Extras are ignored when matching PendingIntents, so the data URI keeps each part distinct.
                 data = Uri.parse("smstransmitter://sms-sent/$historyId/$partIndex")
                 putExtra(EXTRA_HISTORY_ID, historyId)
                 putExtra(EXTRA_REQUEST_ID, requestId)
+                putExtra(EXTRA_SENDER_PHONE_NUMBER, senderPhoneNumber)
             }
             return PendingIntent.getBroadcast(
                 context,

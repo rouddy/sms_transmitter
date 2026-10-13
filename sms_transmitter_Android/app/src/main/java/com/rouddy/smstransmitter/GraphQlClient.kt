@@ -22,6 +22,7 @@ class GraphQlClient internal constructor(private val serviceProvider: () -> Grap
         token: String,
         deviceInfo: String,
         phoneNumbers: List<PhoneNumberLimitConfig>,
+        sentCounts: Map<String, SentCounts> = emptyMap(),
     ): Single<Unit> {
         val mutation = """
             mutation RegisterFcmToken(${'$'}input: RegisterFcmTokenInput!) {
@@ -36,11 +37,12 @@ class GraphQlClient internal constructor(private val serviceProvider: () -> Grap
                 "token" to token,
                 "deviceInfo" to deviceInfo,
                 "phoneNumbers" to phoneNumbers.map { phoneNumber ->
-                    mapOf(
-                        "phoneNumber" to phoneNumber.phoneNumber,
-                        "dailyLimit" to (phoneNumber.dailyLimit ?: LIMIT_UNLIMITED),
-                        "monthlyLimit" to (phoneNumber.monthlyLimit ?: LIMIT_UNLIMITED),
-                    )
+                    buildMap {
+                        put("phoneNumber", phoneNumber.phoneNumber)
+                        put("dailyLimit", phoneNumber.dailyLimit ?: LIMIT_UNLIMITED)
+                        put("monthlyLimit", phoneNumber.monthlyLimit ?: LIMIT_UNLIMITED)
+                        sentCounts[phoneNumber.phoneNumber]?.let { put("sentCounts", it.toInput()) }
+                    }
                 },
             )
         )
@@ -56,13 +58,15 @@ class GraphQlClient internal constructor(private val serviceProvider: () -> Grap
     }
 
     /**
-     * Reports the result of an SMS send attempt to the server.
+     * Reports the result of an SMS send attempt to the server, along with the sender's
+     * [sentCounts] so the server can sync its counts instead of incrementing them.
      * Returns a [Single] that emits [Unit] on success or an error on failure.
      */
     fun reportSmsResult(
         requestId: String,
         success: Boolean,
         error: String?,
+        sentCounts: SentCounts? = null,
     ): Single<Unit> {
         val mutation = """
             mutation ReportSmsResult(${'$'}input: ReportSmsResultInput!) {
@@ -75,6 +79,7 @@ class GraphQlClient internal constructor(private val serviceProvider: () -> Grap
             "success" to success,
         )
         if (error != null) inputMap["error"] = error
+        if (sentCounts != null) inputMap["sentCounts"] = sentCounts.toInput()
 
         val variables = mapOf("input" to inputMap)
 
@@ -144,6 +149,12 @@ class GraphQlClient internal constructor(private val serviceProvider: () -> Grap
                 if (id != null) Maybe.just(id) else Maybe.empty()
             }
     }
+
+    private fun SentCounts.toInput(): Map<String, Any> = mapOf(
+        "countedOn" to countedOn.toString(),
+        "dailySentCount" to daily,
+        "monthlySentCount" to monthly,
+    )
 
     private fun <T : Any> Single<GraphQlResponse<T>>.requireData(): Single<T> {
         return map { response ->

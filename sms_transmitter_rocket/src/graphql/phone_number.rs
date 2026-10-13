@@ -1,8 +1,9 @@
-use async_graphql::{Context, Object, Result, SimpleObject, ID};
-use chrono::Local;
+use async_graphql::{Context, InputObject, Object, Result, SimpleObject, ID};
+use chrono::{Local, NaiveDate};
 use sea_orm::{DatabaseConnection, EntityTrait};
 
 use crate::entity::phone_number;
+use crate::entity::phone_number::ReportedSentCounts;
 
 #[derive(SimpleObject, Clone)]
 pub struct PhoneNumber {
@@ -51,5 +52,25 @@ impl PhoneNumberQuery {
         let db = ctx.data::<DatabaseConnection>()?;
         let rows = phone_number::Entity::find().all(db).await?;
         Ok(rows.into_iter().map(PhoneNumber::from).collect())
+    }
+}
+
+/// Sent counts tallied by the device from its SMS history. The server merges them into its
+/// own counts instead of incrementing per report, so duplicate reports cannot double-count.
+#[derive(InputObject, Clone, Copy)]
+pub struct SentCountsInput {
+    /// Device-local date the counts were tallied on; `monthlySentCount` covers its month.
+    pub counted_on: NaiveDate,
+    pub daily_sent_count: i32,
+    pub monthly_sent_count: i32,
+}
+
+impl From<SentCountsInput> for ReportedSentCounts {
+    fn from(input: SentCountsInput) -> Self {
+        Self {
+            counted_on: input.counted_on,
+            daily: input.daily_sent_count.max(0),
+            monthly: input.monthly_sent_count.max(0),
+        }
     }
 }

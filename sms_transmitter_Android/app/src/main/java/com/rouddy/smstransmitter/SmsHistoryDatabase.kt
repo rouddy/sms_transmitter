@@ -14,11 +14,13 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     override fun onCreate(db: SQLiteDatabase) {
         createSmsHistoryTableIfNotExists(db)
         addMissingColumns(db)
+        createIndexes(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         createSmsHistoryTableIfNotExists(db)
         addMissingColumns(db)
+        createIndexes(db)
     }
 
     /**
@@ -26,6 +28,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
      * per-part sent results are still outstanding; see [recordSentPartResult].
      */
     fun insertSmsHistory(
+        requestId: String?,
         senderPhoneNumber: String,
         phoneNumber: String,
         message: String,
@@ -35,6 +38,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     ): Long {
         val values = ContentValues().apply {
             put(COLUMN_CREATED_AT, System.currentTimeMillis())
+            put(COLUMN_REQUEST_ID, requestId)
             put(COLUMN_SENDER_PHONE_NUMBER, senderPhoneNumber)
             put(COLUMN_PHONE_NUMBER, phoneNumber)
             put(COLUMN_MESSAGE, message)
@@ -76,6 +80,14 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         } finally {
             db.endTransaction()
         }
+    }
+
+    /** Whether a message for [requestId] was already handled, so a duplicate FCM delivery can be skipped. */
+    fun hasSmsHistoryForRequest(requestId: String): Boolean {
+        return readableDatabase.rawQuery(
+            "SELECT 1 FROM $TABLE_SMS_HISTORY WHERE $COLUMN_REQUEST_ID = ? LIMIT 1",
+            arrayOf(requestId)
+        ).use { cursor -> cursor.moveToFirst() }
     }
 
     /** Finalizes a pending message as failed, e.g. when handing it to the radio threw. */
@@ -121,18 +133,24 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     }
 
     /**
-     * Counts successful and still pending messages, so in-flight messages count toward limits
-     * until their sent result arrives.
+     * Counts successful messages for [senderPhoneNumber]. With [includePending], messages still
+     * waiting for their sent result are counted too, so in-flight messages count toward limits.
      */
-    fun countSentOrPendingSmsBetweenForSender(
+    fun countSmsBetweenForSender(
         senderPhoneNumber: String,
         startMillisInclusive: Long,
-        endMillisExclusive: Long
+        endMillisExclusive: Long,
+        includePending: Boolean,
     ): Int {
+        val statusCondition = if (includePending) {
+            "($COLUMN_SMS_SUCCESS = 1 OR $COLUMN_PENDING_PARTS > 0)"
+        } else {
+            "$COLUMN_SMS_SUCCESS = 1"
+        }
         val query = """
             SELECT COUNT(*)
             FROM $TABLE_SMS_HISTORY
-            WHERE ($COLUMN_SMS_SUCCESS = 1 OR $COLUMN_PENDING_PARTS > 0)
+            WHERE $statusCondition
               AND $COLUMN_SENDER_PHONE_NUMBER = ?
               AND $COLUMN_CREATED_AT >= ?
               AND $COLUMN_CREATED_AT < ?
@@ -148,7 +166,7 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val DATABASE_NAME = "sms_history.db"
-        private const val DATABASE_VERSION = 4
+        private const val DATABASE_VERSION = 5
 
         private const val TABLE_SMS_HISTORY = "sms_history"
         private const val COLUMN_ID = "id"
@@ -159,6 +177,8 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
         private const val COLUMN_SMS_SUCCESS = "sms_success"
         private const val COLUMN_SMS_ERROR = "sms_error"
         private const val COLUMN_PENDING_PARTS = "pending_parts"
+        private const val COLUMN_REQUEST_ID = "request_id"
+        private const val INDEX_REQUEST_ID = "idx_sms_history_request_id"
     }
 
     private fun createSmsHistoryTableIfNotExists(db: SQLiteDatabase) {
@@ -172,7 +192,8 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
                 $COLUMN_MESSAGE TEXT NOT NULL,
                 $COLUMN_SMS_SUCCESS INTEGER NOT NULL,
                 $COLUMN_SMS_ERROR TEXT,
-                $COLUMN_PENDING_PARTS INTEGER NOT NULL DEFAULT 0
+                $COLUMN_PENDING_PARTS INTEGER NOT NULL DEFAULT 0,
+                $COLUMN_REQUEST_ID TEXT
             )
             """.trimIndent()
         )
@@ -181,6 +202,11 @@ class SmsHistoryDatabase(context: Context) : SQLiteOpenHelper(
     private fun addMissingColumns(db: SQLiteDatabase) {
         addColumnIfNeeded(db, COLUMN_SENDER_PHONE_NUMBER, "TEXT")
         addColumnIfNeeded(db, COLUMN_PENDING_PARTS, "INTEGER NOT NULL DEFAULT 0")
+        addColumnIfNeeded(db, COLUMN_REQUEST_ID, "TEXT")
+    }
+
+    private fun createIndexes(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS $INDEX_REQUEST_ID ON $TABLE_SMS_HISTORY ($COLUMN_REQUEST_ID)")
     }
 
     private fun addColumnIfNeeded(db: SQLiteDatabase, column: String, definition: String) {

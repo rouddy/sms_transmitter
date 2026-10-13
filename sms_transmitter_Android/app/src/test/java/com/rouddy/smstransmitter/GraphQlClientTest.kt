@@ -21,6 +21,7 @@ import retrofit2.Retrofit
 import retrofit2.adapter.rxjava3.RxJava3CallAdapterFactory
 import retrofit2.converter.gson.GsonConverterFactory
 import java.io.IOException
+import java.time.LocalDate
 import java.util.ArrayDeque
 
 class GraphQlClientTest {
@@ -130,6 +131,28 @@ class GraphQlClientTest {
     }
 
     @Test
+    fun `registration sends sent counts only for numbers that have them`() {
+        val fixture = Fixture("""{"data":{"registerFcmToken":{"id":"registered-id"}}}""")
+        val phoneNumbers = listOf(
+            PhoneNumberLimitConfig("01011112222", dailyLimit = 10, monthlyLimit = null),
+            PhoneNumberLimitConfig("01033334444", dailyLimit = null, monthlyLimit = 300),
+        )
+        val sentCounts = mapOf("01011112222" to SentCounts(LocalDate.of(2026, 10, 14), daily = 3, monthly = 42))
+
+        fixture.client.registerFcmToken("target", "device", phoneNumbers, sentCounts).test().assertResult(Unit)
+
+        val rows = fixture.body(0).getAsJsonObject("variables").getAsJsonObject("input").getAsJsonArray("phoneNumbers")
+        val counted = rows[0].asJsonObject
+        assertEquals(10, counted["dailyLimit"].asInt)
+        assertEquals(0, counted["monthlyLimit"].asInt)
+        val counts = counted.getAsJsonObject("sentCounts")
+        assertEquals("2026-10-14", counts["countedOn"].asString)
+        assertEquals(3, counts["dailySentCount"].asInt)
+        assertEquals(42, counts["monthlySentCount"].asInt)
+        assertFalse(rows[1].asJsonObject.has("sentCounts"))
+    }
+
+    @Test
     fun `registration requires returned id`() {
         for (data in listOf("{}", """{"registerFcmToken":null}""", """{"registerFcmToken":{}}""",
             """{"registerFcmToken":{"id":null}}""", """{"registerFcmToken":{"id":" "}}""")) {
@@ -185,6 +208,21 @@ class GraphQlClientTest {
             assertFalse(input["success"].asBoolean)
             if (error == null) assertFalse(input.has("error")) else assertEquals(error, input["error"].asString)
         }
+    }
+
+    @Test
+    fun `SMS report sends sent counts only when given`() {
+        val withCounts = Fixture("""{"data":{"reportSmsResult":true}}""")
+        withCounts.client.reportSmsResult("request-id", true, null, SentCounts(LocalDate.of(2026, 10, 1), daily = 1, monthly = 1))
+            .test().assertResult(Unit)
+        val counts = withCounts.body(0).getAsJsonObject("variables").getAsJsonObject("input").getAsJsonObject("sentCounts")
+        assertEquals("2026-10-01", counts["countedOn"].asString)
+        assertEquals(1, counts["dailySentCount"].asInt)
+        assertEquals(1, counts["monthlySentCount"].asInt)
+
+        val withoutCounts = Fixture("""{"data":{"reportSmsResult":true}}""")
+        withoutCounts.client.reportSmsResult("request-id", true, null).test().assertResult(Unit)
+        assertFalse(withoutCounts.body(0).getAsJsonObject("variables").getAsJsonObject("input").has("sentCounts"))
     }
 
     @Test

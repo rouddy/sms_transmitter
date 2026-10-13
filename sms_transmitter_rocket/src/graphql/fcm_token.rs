@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::entity::{fcm_token, phone_number};
-use crate::graphql::phone_number::PhoneNumber;
+use crate::graphql::phone_number::{PhoneNumber, SentCountsInput};
 
 #[derive(SimpleObject, Clone)]
 #[graphql(complex)]
@@ -53,6 +53,9 @@ pub struct PhoneNumberInput {
     pub phone_number: String,
     pub daily_limit: i32,
     pub monthly_limit: i32,
+    /// Sent counts from the device's SMS history, which may include messages relayed for
+    /// another server. Omitted by older app versions.
+    pub sent_counts: Option<SentCountsInput>,
 }
 
 #[derive(InputObject)]
@@ -132,7 +135,11 @@ impl FcmTokenMutation {
 
         for input_row in &phone_numbers {
             if let Some(existing) = existing_by_number.get(&input_row.phone_number) {
-                let mut active_row: phone_number::ActiveModel = existing.clone().into();
+                let mut row = existing.clone();
+                if let Some(counts) = input_row.sent_counts {
+                    row.merge_reported_sent_counts(counts.into(), today);
+                }
+                let mut active_row = row.into_sent_counts_active_model();
                 active_row.daily_limit = Set(input_row.daily_limit);
                 active_row.monthly_limit = Set(input_row.monthly_limit);
                 active_row.update(&txn).await?;
@@ -141,30 +148,28 @@ impl FcmTokenMutation {
                     .filter(phone_number::Column::PhoneNumber.eq(input_row.phone_number.clone()))
                     .one(&txn)
                     .await?;
-                if let Some(other_row) = other {
-                    let mut active_row: phone_number::ActiveModel = other_row.into_active_model();
-                    active_row.fcm_token_id = Set(model.id);
-                    active_row.daily_limit = Set(input_row.daily_limit);
-                    active_row.monthly_limit = Set(input_row.monthly_limit);
-                    active_row.daily_sent_count = Set(0);
-                    active_row.monthly_sent_count = Set(0);
-                    active_row.last_daily_reset = Set(today);
-                    active_row.last_monthly_reset = Set(today);
+                // A number new to this token starts from the device's counts (0 if not reported).
+                let mut row = phone_number::Model {
+                    id: other
+                        .as_ref()
+                        .map_or_else(Uuid::new_v4, |other_row| other_row.id),
+                    fcm_token_id: model.id,
+                    phone_number: input_row.phone_number.clone(),
+                    daily_limit: input_row.daily_limit,
+                    monthly_limit: input_row.monthly_limit,
+                    daily_sent_count: 0,
+                    monthly_sent_count: 0,
+                    last_daily_reset: today,
+                    last_monthly_reset: today,
+                };
+                if let Some(counts) = input_row.sent_counts {
+                    row.merge_reported_sent_counts(counts.into(), today);
+                }
+                let active_row = row.into_active_model().reset_all();
+                if other.is_some() {
                     active_row.update(&txn).await?;
                 } else {
-                    phone_number::ActiveModel {
-                        id: Set(Uuid::new_v4()),
-                        fcm_token_id: Set(model.id),
-                        phone_number: Set(input_row.phone_number.clone()),
-                        daily_limit: Set(input_row.daily_limit),
-                        monthly_limit: Set(input_row.monthly_limit),
-                        daily_sent_count: Set(0),
-                        monthly_sent_count: Set(0),
-                        last_daily_reset: Set(today),
-                        last_monthly_reset: Set(today),
-                    }
-                    .insert(&txn)
-                    .await?;
+                    active_row.insert(&txn).await?;
                 }
             }
         }
@@ -208,6 +213,7 @@ fn normalize_phone_numbers(phone_numbers: Vec<PhoneNumberInput>) -> Vec<PhoneNum
                 phone_number,
                 daily_limit: input.daily_limit.max(0),
                 monthly_limit: input.monthly_limit.max(0),
+                sent_counts: input.sent_counts,
             },
         );
     }

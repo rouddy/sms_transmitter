@@ -28,7 +28,7 @@
 | P2 | ✅ 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 (완료) | Rocket | `firebase.rs` |
 | P2 | 빌드타임 로컬 IP 감지 | Android | `build.gradle.kts` |
 | P2 | 부가 정리 | Rocket | `db.rs`·매직 상수·정규화 공유 |
-| P1 | 결과 보고 멱등성 부재 | Rocket+Android | 같은 `requestId` 중복 보고시 카운트 중복 증가 |
+| P1 | ✅ 결과 보고 멱등성 부재 (완료) | Rocket+Android | 기기 이력 기준 카운트 동기화, 첫 보고만 상태 전이, 중복 수신 차단 |
 
 ---
 
@@ -192,16 +192,32 @@
 
 ## 추가 발견 항목
 
-### 14. 결과 보고 멱등성 부재 (Rocket + Android) — P1
+### 14. 결과 보고 멱등성 부재 (Rocket + Android) — P1 — ✅ 완료
 
-- **위치**: `sms_transmitter_rocket/src/graphql/sms_request.rs` `report_sms_result`, `sms_transmitter_Android/.../FirebaseMessageReceiverService.kt` `onMessageReceived`
-- **문제**:
-  - `report_sms_result`는 현재 상태를 보지 않고 발신 카운트를 증가시키고 상태를 덮어씁니다. 같은 `requestId`로 두 번 보고되면 카운트가 두 번 증가해 한도 계산이 어긋납니다.
-  - Android 쪽도 `requestId` 기준 중복 제거가 없어, FCM이 같은 메시지를 두 번 전달하면 SMS가 두 번 발송됩니다. FCM은 at-least-once 전달이므로 중복은 정상 동작 범위입니다.
-- **개선 방향**:
-  - 서버: `report_sms_result`에서 `status`가 `Sending`일 때만 카운트 증가와 상태 전이를 수행하고, 이미 종료 상태면 성공으로 응답하되 아무것도 바꾸지 않습니다(멱등). 트랜잭션 안에서 상태를 확인하므로 추가 락은 불필요합니다.
-  - Android: 처리한 `requestId`를 짧은 TTL로 기록해 중복 수신을 건너뜁니다.
-- **우선순위 근거**: 11번에서 FCM 재시도를 추가하면서 중복 전송 경로를 의도적으로 배제했지만(429/500/503만 재시도), FCM 자체의 중복 전달은 여전히 남아 있습니다. 카운트 정확성에 직접 영향이 있어 P1로 둡니다.
+- **위치**: Rocket `src/entity/phone_number.rs`, `src/graphql/{sms_request,fcm_token,phone_number,mod}.rs` / Android `FirebaseMessageReceiverService.kt`, `SmsHistoryDatabase.kt`, `SmsUsageCalculator.kt`, `GraphQlClient.kt`, `SmsResultReporter.kt`, `SmsSentReceiver.kt`, `FcmTokenRegistrar.kt`
+- **기존 문제**:
+  - `report_sms_result`가 현재 상태를 보지 않고 카운트 증가·상태 덮어쓰기·콜백 호출을 수행해, 같은 `requestId`가 두 번 보고되면 모두 반복됐습니다.
+  - Android는 `requestId` 기준 중복 제거가 없어 FCM 중복 전달 시 SMS가 두 번 발송됐습니다.
+  - `register_fcm_token`은 번호가 다른 토큰으로 옮겨가면 카운트를 0으로 초기화했고, 다른 서버를 통해 보낸 문자는 반영할 방법이 없었습니다.
+- **작업 중 발견한 기존 버그**: `report_sms_result`의 카운트 증가가 **DB에 저장되지 않고 있었습니다.** `Model`을 수정한 뒤 `.into()`로 만든 `ActiveModel`은 모든 컬럼이 `Unchanged`라서 `update`가 no-op이 됩니다(SeaORM 1.1.20의 `From<Model>` 구현과 `is_noop()` 분기로 확인). 서버의 발신 카운트는 계속 0이었고, 서버 측 한도 판단(`can_send_now`)과 발신 번호 선택(`availability_score`)이 카운트 없이 동작했습니다. 이 동작을 고정하는 테스트(`plain_into_does_not_persist_count_changes`)를 남기고, 카운트 컬럼을 `Set`으로 표시하는 `into_sent_counts_active_model()`을 추가했습니다.
+- **적용 방향**: 실제 발송 기록은 모두 기기에 있으므로 서버 카운트를 "보고마다 +1"이 아니라 **기기 이력 기준 동기화**로 바꿨습니다.
+- **적용 내용 (서버)**:
+  - `SentCountsInput { countedOn: NaiveDate, dailySentCount, monthlySentCount }`를 추가하고 `ReportSmsResultInput.sentCounts`, `PhoneNumberInput.sentCounts`(번호별)로 받습니다. 둘 다 optional입니다.
+  - `Model::merge_reported_sent_counts`: `countedOn`이 서버의 오늘이면 일간, 같은 달이면 월간 카운트를 `max(서버 유효값, 보고값)`으로 반영합니다. 보고 순서가 뒤바뀌거나 앱 재설치로 이력이 비어도 기간 안에서는 카운트가 줄지 않습니다. 다른 기간의 값(기기 시계·시간대가 자정 근처에서 어긋난 경우)은 무시하고 다음 보고·등록에서 따라잡습니다. 음수는 0으로 처리합니다.
+  - `report_sms_result`: `sentCounts`가 있으면 상태와 무관하게 동기화합니다(같은 값 재반영이라 안전). 없으면(구버전 앱) **첫 성공 보고에서만** 증가합니다. 상태 전이와 콜백은 `status == Sending`인 첫 보고에서만 수행하고, 이후 보고는 카운트 동기화만 한 뒤 `true`로 응답합니다. 할당된 번호 행이 사라진 경우는 mutation 전체를 실패시키지 않고 warn 로그만 남깁니다(실패시키면 상태가 `Sending`에 영구히 남음).
+  - `register_fcm_token`: 유지되는 번호는 보고값을 병합하고, 새 번호·다른 토큰에서 옮겨온 번호는 0에서 시작해 보고값을 반영합니다.
+- **적용 내용 (Android)**:
+  - 이력 DB v5: `request_id` 컬럼과 인덱스를 추가했습니다. `onMessageReceived`에서 같은 `requestId`의 이력이 이미 있으면 발송하지 않고 건너뜁니다. 처리 기록을 이력에 영구 보관하므로 별도 TTL 저장소는 두지 않았습니다.
+  - `SmsUsageCalculator.confirmedSentCounts`: 서버에는 **확정된 성공 건수만** 보냅니다. 로컬 한도 판단과 사용량 표시는 기존처럼 전송 중인 건을 포함합니다(P2-10). 전송 중인 건은 나중에 실패할 수 있는데, 서버는 기간 안에서 카운트를 줄이지 않기 때문입니다. `countedOn`은 기기 기본 시간대의 날짜입니다.
+  - 결과 보고(`SmsResultReporter`: 즉시 실패와 `SmsSentReceiver` 최종 결과 모두)와 토큰 등록(`FcmTokenRegistrar.registerToken`)에 발신 번호별 확정 건수를 실어 보냅니다. 리시버는 PendingIntent extra로 발신 번호를 전달받습니다.
+- **호환성·배포 순서**: **서버를 먼저 배포해야 합니다.** 새 앱이 구버전 서버에 `sentCounts`를 보내면 알 수 없는 입력 필드라 GraphQL 오류가 나서 보고·등록이 실패합니다. 반대로 구버전 앱은 새 서버에서 기존처럼 동작합니다(첫 성공 보고에서만 +1). 그동안 저장되지 않던 서버 카운트는 배포 후 첫 등록·보고 때 기기 값으로 채워집니다. DB 마이그레이션은 서버에 없고, Android는 이력 DB가 4 → 5로 올라갑니다.
+- **남은 한계**:
+  - 서버가 FCM 전송 실패(502/504 등 응답 유실 포함)로 `Failed` 처리한 뒤 기기가 실제로 보내고 성공을 보고하면, 상태는 `Failed`로 남고 카운트만 동기화됩니다.
+  - 같은 번호의 SIM을 다른 기기로 옮기면, 이전 기기의 이력은 새 기기 카운트에 포함되지 않습니다. 서버 값은 `max` 반영이라 같은 기간 동안은 유지됩니다.
+  - 서버의 `request_sms`는 발송 시점에 카운트를 예약하지 않으므로, 결과 보고 전에 몰린 요청은 같은 번호에 배정될 수 있습니다(기존과 동일). 기기의 로컬 한도 판단이 최종 방어선입니다.
+- **검증**:
+  - Rocket: 엔티티 테스트 7개(병합: 큰 값 반영·감소 금지·지난 기간 대체·날짜만 다른 같은 달·다른 달 무시, `into()` no-op 고정, 카운트 저장 헬퍼)와 resolver 테스트 5개(마이그레이션한 메모리 SQLite에 실제 GraphQL 실행: 등록 동기화·감소 금지, 번호 이동 시 보고값 유지, 반복 보고 시 첫 상태 유지와 카운트 동기화, 구버전 보고 1회만 증가·저장, 실패 보고 미증가)를 추가했습니다. `cargo fmt`, `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test` 통과(전체 43개).
+  - Android: `GraphQlClientTest`에 2개(등록 시 번호별 `sentCounts` 직렬화, 보고 시 `sentCounts` 유무)를 추가했습니다. `./gradlew :app:compileDebugKotlin`, `:app:testDebugUnitTest`(전체 41개), `:app:lintDebug`(신규 경고 없음) 통과. 중복 수신 차단과 이력 DB 4 → 5 업그레이드는 `Context`/SQLite에 의존해 단위 테스트하지 않았고, **실기기·실서버 연동은 확인하지 않았습니다.**
 
 ---
 
@@ -211,6 +227,6 @@
 2. **Android 구조 정리**: 타입 안전화(3)·`SettingsActivity` 분리(7) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2) 정리 (`status`(4)·legacy 잔재(5)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).
-5. **멱등성**: 결과 보고 멱등성(14) — 서버 가드를 먼저 넣고 Android 중복 제거를 뒤따르게 하는 것이 안전합니다.
+5. **멱등성**: 결과 보고 멱등성(14) 완료. 배포는 서버를 먼저 하고 앱을 그다음에 해야 합니다.
 
 > 참고: `sendTextMessage` 전송 결과 확인(10)은 정확성 이슈라 단독으로 처리했습니다(완료).

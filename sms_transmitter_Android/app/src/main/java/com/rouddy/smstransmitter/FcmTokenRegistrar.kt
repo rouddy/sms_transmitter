@@ -52,7 +52,10 @@ class FcmTokenRegistrar(
         }
     }
 
-    /** Registers a known FCM token along with the configured phone numbers. */
+    /**
+     * Registers a known FCM token along with the configured phone numbers and their confirmed
+     * sent counts, which may include messages relayed for another server.
+     */
     fun registerToken(token: String) {
         val config = SmsLimitSettings(context).getConfig()
         val serverUrl = config.serverUrl ?: return
@@ -61,6 +64,7 @@ class FcmTokenRegistrar(
             token = token,
             deviceInfo = deviceInfo,
             phoneNumbers = config.phoneNumbers,
+            sentCounts = SmsUsageCalculator.confirmedSentCounts(context, config.phoneNumbers.map { it.phoneNumber }),
         )
             .subscribeOn(Schedulers.io())
             .observeOn(AndroidSchedulers.mainThread())
