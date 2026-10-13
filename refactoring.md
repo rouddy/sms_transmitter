@@ -186,7 +186,7 @@
 
 ### 13. 부가 정리 (Rocket)
 
-- `db.rs`는 7줄짜리 단일 함수 래퍼라 `main.rs`에 인라인하거나 그대로 두되 `config`처럼 용도를 명확히 하는 수준으로 정리 가능.
+- ✅ **`db.rs` 인라인 (완료)**: `Database::connect`를 감싸기만 하던 7줄짜리 `db::connect`를 `main.rs`에서 `sea_orm::Database::connect`로 직접 호출하도록 바꾸고 `src/db.rs`와 `mod db`를 삭제했습니다. 호출처는 한 곳뿐이었고 동작 변화는 없습니다. `cargo fmt --check`, `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(43개) 통과.
 - `ACTIVE_TOKEN_SECS = 7_776_000`(90일) 같은 매직 상수는 `chrono::Duration::days(90)`로 표현해 의도를 명시.
 - `fcm_token.rs`의 `register_fcm_token`과 Android `PhoneNumberResolver.normalizePhoneNumber`는 서로 다른 "전화번호 정규화" 구현이라, 규칙(트림·공백/하이픈 제거 등)이 벌어지지 않도록 양쪽 정규화 규칙을 문서화·공유할 필요(**cross-cutting**).
 

@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 mod auth;
 mod config;
-mod db;
 mod entity;
 mod firebase;
 mod graphql;
@@ -56,7 +55,7 @@ async fn rocket() -> _ {
     let jwt_verifier =
         auth::JwtVerifier::from_dir(&config.auth_keys_dir).expect("Failed to load auth public key");
 
-    let db = db::connect(&config.database_url)
+    let db = sea_orm::Database::connect(&config.database_url)
         .await
         .expect("Failed to connect to database");
 
