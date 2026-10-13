@@ -14,7 +14,8 @@ use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
 use crate::graphql::phone_number::SentCountsInput;
 
-const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
+/// Only devices whose FCM token was seen within this window are picked as senders.
+const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
 
 const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 
@@ -127,10 +128,7 @@ impl SmsRequestMutation {
         let txn = db.begin().await?;
 
         let tokens = fcm_token::Entity::find()
-            .filter(
-                fcm_token::Column::LastAccessTime
-                    .gt(now - chrono::Duration::seconds(ACTIVE_TOKEN_SECS)),
-            )
+            .filter(fcm_token::Column::LastAccessTime.gt(now - ACTIVE_TOKEN_WINDOW))
             .all(&txn)
             .await?;
         let token_by_id = tokens

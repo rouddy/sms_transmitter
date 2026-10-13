@@ -187,7 +187,7 @@
 ### 13. 부가 정리 (Rocket)
 
 - ✅ **`db.rs` 인라인 (완료)**: `Database::connect`를 감싸기만 하던 7줄짜리 `db::connect`를 `main.rs`에서 `sea_orm::Database::connect`로 직접 호출하도록 바꾸고 `src/db.rs`와 `mod db`를 삭제했습니다. 호출처는 한 곳뿐이었고 동작 변화는 없습니다. `cargo fmt --check`, `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(43개) 통과.
-- `ACTIVE_TOKEN_SECS = 7_776_000`(90일) 같은 매직 상수는 `chrono::Duration::days(90)`로 표현해 의도를 명시.
+- ✅ **매직 상수 정리 (완료)**: `sms_request.rs`의 `ACTIVE_TOKEN_SECS: i64 = 7_776_000`(90일)을 `ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90)`로 바꾸고 용도를 doc 주석으로 남겼습니다. chrono 0.4.44에서 `Duration::days`가 `const fn`이라 상수로 둘 수 있습니다. 7,776,000초 = 90일이므로 값은 같습니다. `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(43개) 통과.
 - `fcm_token.rs`의 `register_fcm_token`과 Android `PhoneNumberResolver.normalizePhoneNumber`는 서로 다른 "전화번호 정규화" 구현이라, 규칙(트림·공백/하이픈 제거 등)이 벌어지지 않도록 양쪽 정규화 규칙을 문서화·공유할 필요(**cross-cutting**).
 
 ---
