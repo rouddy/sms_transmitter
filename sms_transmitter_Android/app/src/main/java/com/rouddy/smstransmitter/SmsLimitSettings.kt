@@ -20,6 +20,10 @@ data class SmsLimitConfig(
 class SmsLimitSettings(context: Context) {
     private val preferences = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
 
+    init {
+        removeLegacyKeys()
+    }
+
     fun initializePhoneNumbersIfNeeded(context: Context): Boolean {
         if (isPhoneNumbersInitialized()) return true
         if (!PhoneNumberResolver.hasPhoneNumberPermission(context)) return false
@@ -32,17 +36,8 @@ class SmsLimitSettings(context: Context) {
     }
 
     fun getConfig(): SmsLimitConfig {
-        val phoneNumbers = readPhoneNumberConfigs().ifEmpty {
-            readLegacyPhoneNumbers().map { phoneNumber ->
-                PhoneNumberLimitConfig(
-                    phoneNumber = phoneNumber,
-                    dailyLimit = readLegacyLimit(KEY_DAILY_LIMIT),
-                    monthlyLimit = readLegacyLimit(KEY_MONTHLY_LIMIT),
-                )
-            }
-        }
         return SmsLimitConfig(
-            phoneNumbers = phoneNumbers,
+            phoneNumbers = readPhoneNumberConfigs(),
             overlayEnabled = preferences.getBoolean(KEY_OVERLAY_ENABLED, false),
             serverUrl = preferences.getString(KEY_SERVER_URL, null)?.trim()?.takeIf { it.isNotBlank() }
                 ?: "${BuildConfig.BASE_URL}:${BuildConfig.PORT}",
@@ -76,12 +71,6 @@ class SmsLimitSettings(context: Context) {
 
         preferences.edit()
             .putString(KEY_PHONE_NUMBER_CONFIGS, jsonArray.toString())
-            .putString(
-                KEY_PHONE_NUMBERS,
-                normalizedPhoneNumbers.joinToString(PHONE_NUMBER_SEPARATOR.toString()) { it.phoneNumber }
-            )
-            .remove(KEY_DAILY_LIMIT)
-            .remove(KEY_MONTHLY_LIMIT)
             .apply()
     }
 
@@ -167,31 +156,26 @@ class SmsLimitSettings(context: Context) {
         }.getOrDefault(emptyList())
     }
 
-    private fun readLegacyPhoneNumbers(): List<String> {
-        val value = preferences.getString(KEY_PHONE_NUMBERS, null).orEmpty()
-        if (value.isBlank()) return emptyList()
-        return value.split(PHONE_NUMBER_SEPARATOR)
-            .mapNotNull { PhoneNumberResolver.normalizePhoneNumber(it) }
-            .distinct()
-    }
+    private fun removeLegacyKeys() {
+        val legacyKeys = LEGACY_KEYS.filter { preferences.contains(it) }
+        if (legacyKeys.isEmpty()) return
 
-    private fun readLegacyLimit(key: String): Int? {
-        val value = preferences.getString(key, null)?.trim()
-        if (value.isNullOrEmpty()) return null
-        return value.toIntOrNull()?.takeIf { it > 0 }
+        preferences.edit().apply {
+            legacyKeys.forEach { remove(it) }
+        }.apply()
     }
 
     companion object {
         private const val PREF_NAME = "sms_limits"
         private const val KEY_SERVER_URL = "server_url"
-        private const val KEY_DAILY_LIMIT = "daily_limit"
-        private const val KEY_MONTHLY_LIMIT = "monthly_limit"
-        private const val KEY_PHONE_NUMBERS = "phone_numbers"
         private const val KEY_PHONE_NUMBER_CONFIGS = "phone_number_configs"
         private const val KEY_PHONE_NUMBERS_INITIALIZED = "phone_numbers_initialized"
         private const val KEY_OVERLAY_ENABLED = "overlay_enabled"
         private const val KEY_OVERLAY_POS_X = "overlay_pos_x"
         private const val KEY_OVERLAY_POS_Y = "overlay_pos_y"
-        private const val PHONE_NUMBER_SEPARATOR = '\n'
+
+        // 단일 발신번호·단일 한도 구조의 키. 0.2.0부터 KEY_PHONE_NUMBER_CONFIGS가 유일한 소스이며,
+        // 0.2.0 이전 출시본에는 phone_numbers 키가 없어 이 값들로 번호별 설정을 복원할 수 없다.
+        private val LEGACY_KEYS = listOf("daily_limit", "monthly_limit", "phone_numbers")
     }
 }

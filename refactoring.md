@@ -19,7 +19,7 @@
 | P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
 | P1 | ✅ GraphQL 응답 타입 안전화 (완료) | Android | 연산별 응답 DTO 적용, 수동 캐스팅·silent skip 제거 |
 | P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
-| P1 | 설정 마이그레이션 잔재 정리 | Android | `SmsLimitSettings` legacy 키 |
+| P1 | ✅ 설정 마이그레이션 잔재 정리 (완료) | Android | legacy 읽기·쓰기 제거, JSON 단일 소스 |
 | P1 | ✅ 피드백 응답시 발신 카운트 증가 분기 (완료) | Rocket | fallback 경로 제거, 단일 경로로 정리 |
 | P1 | `SettingsActivity` 분리 | Android | 단일 액티비티의 다중 책임 |
 | P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
@@ -75,13 +75,18 @@
 - **호환성**: SQLite 문자열 컬럼과 기존 저장값(`Sending`/`Sent`/`Failed`), GraphQL 값(`SENDING`/`SENT`/`FAILED`)을 유지하므로 DB 마이그레이션은 필요 없습니다. DB 자체에 CHECK 제약을 추가한 것은 아니므로 외부 SQL로 잘못된 값을 넣으면 조회 시 오류가 납니다.
 - **검증**: DB 값 매핑, SQLite의 정상값 역직렬화·알 수 없는 값 거부, GraphQL enum 값 유지 테스트를 추가했습니다. `cargo check` 및 `cargo test` 통과(전체 21개).
 
-### 5. 설정 마이그레이션 잔재 정리 (Android)
+### 5. 설정 마이그레이션 잔재 정리 (Android) — ✅ 완료
 
-- **위치**: `SmsLimitSettings.kt` — `readLegacyPhoneNumbers`, `readLegacyLimit`, `KEY_DAILY_LIMIT`/`KEY_MONTHLY_LIMIT`/`KEY_PHONE_NUMBERS` legacy 키
-- **문제**:
-  - 과거 단일 발신번호+단일 한도 구조의 legacy 키를 여전히 읽고, `savePhoneNumberConfigs`가 새 JSON(`KEY_PHONE_NUMBER_CONFIGS`)과 legacy(`KEY_PHONE_NUMBERS`)를 **둘 다** 기록합니다. 신규 JSON이 유일 소스가 된 지 오래면 legacy 경로는 데드코드에 가깝습니다.
-- **개선 방향**:
-  - legacy 읽기·쓰기 경로를 제거하고 `remove(...)`로 한 번 정리하는 절차를 문서화한 뒤, `getConfig`/`savePhoneNumberConfigs`를 신규 JSON 단일 소스로 단순화합니다.
+- **위치**: `sms_transmitter_Android/.../SmsLimitSettings.kt`
+- **기존 문제**: 과거 단일 발신번호+단일 한도 구조의 legacy 키(`daily_limit`/`monthly_limit`/`phone_numbers`)를 신규 JSON(`phone_number_configs`)이 비어 있을 때 fallback으로 읽었고, `savePhoneNumberConfigs`가 신규 JSON과 legacy `phone_numbers`를 **둘 다** 기록했습니다.
+- **적용 내용**:
+  - `getConfig`는 `readPhoneNumberConfigs()`만 사용하고, `savePhoneNumberConfigs`는 JSON만 기록합니다. `readLegacyPhoneNumbers`/`readLegacyLimit`, legacy 키 상수, `PHONE_NUMBER_SEPARATOR`를 제거했습니다.
+  - 정리 절차: 생성자(`init`)에서 legacy 키가 남아 있으면 한 번 `remove`합니다. 키가 없으면 `contains` 확인만 하고 쓰기는 하지 않습니다. 키 이름은 `LEGACY_KEYS`에 남기고 배경을 주석으로 기록했습니다.
+- **안전성 근거(git 이력 확인)**:
+  - `daily_limit`/`monthly_limit`은 `6e0fcba`(2026-04-22)부터, `phone_numbers`는 `73ff72d`(2026-08-12)부터, JSON은 바로 다음 날 `4e9e2f6`(2026-08-13)부터 기록됐습니다. 첫 출시 태그 `0.2.0`(2026-08-20)은 이미 JSON을 기록합니다.
+  - legacy fallback은 `phone_numbers`가 있어야만 설정을 만들 수 있었으므로, 이 키가 없는 0.2.0 이전 빌드의 단일 한도는 0.2.0에서도 이미 복원되지 않았습니다. 따라서 출시본 기준 동작 변화는 없고, 영향 범위는 `73ff72d`~`4e9e2f6` 사이 하루 동안의 개발 빌드뿐입니다.
+- **호환성**: 0.2.0 이상에서 업데이트하는 기기는 JSON을 그대로 읽습니다. 다운그레이드 시 구 버전도 JSON을 우선 읽으므로 legacy 키 삭제의 영향이 없습니다.
+- **검증**: `./gradlew :app:compileDebugKotlin`, `./gradlew :app:testDebugUnitTest` 통과. `SmsLimitSettings`는 `Context`/`SharedPreferences`에 의존하고 프로젝트에 Robolectric이 없어 전용 단위 테스트는 추가하지 않았으며, 실기기 업그레이드 테스트도 수행하지 않았습니다.
 
 ### 6. 피드백 응답시 발신 카운트 증가 분기 정리 (Rocket) — ✅ 완료
 
@@ -184,7 +189,7 @@
 
 1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. 남은 Rocket 항목은 P2(11, 13).
 2. **Android 구조 정리**: 타입 안전화(3) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
-3. **타입/문자열/설정 정리**: 하드코딩 문자열(2)·legacy 잔재(5) 제거 (`status`(4)는 완료).
+3. **타입/문자열/설정 정리**: 하드코딩 문자열(2) 정리 (`status`(4)·legacy 잔재(5)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).
 5. **멱등성**: 결과 보고 멱등성(14) — 서버 가드를 먼저 넣고 Android 중복 제거를 뒤따르게 하는 것이 안전합니다.
 
