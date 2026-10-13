@@ -2,7 +2,7 @@ use async_graphql::{ComplexObject, Context, InputObject, Object, Result, SimpleO
 use chrono::Local;
 use sea_orm::{
     sea_query::OnConflict, ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait,
-    QueryFilter, QueryOrder, Set, TransactionTrait, IntoActiveModel,
+    IntoActiveModel, QueryFilter, QueryOrder, Set, TransactionTrait,
 };
 use std::collections::HashMap;
 use uuid::Uuid;
