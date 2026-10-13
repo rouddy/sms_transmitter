@@ -236,6 +236,69 @@ const token = await new SignJWT({ jti: randomUUID() })
   .sign(key);
 ```
 
+**Rust** (`reqwest` + `jsonwebtoken`)
+
+```toml
+[dependencies]
+anyhow = "1"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4"] }
+```
+
+```rust
+use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use serde::Serialize;
+use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Serialize)]
+struct Claims {
+    iat: u64,
+    exp: u64,
+    jti: String,
+}
+
+fn create_token(key: &EncodingKey) -> anyhow::Result<String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+    let claims = Claims {
+        iat: now,
+        exp: now + 300,
+        jti: uuid::Uuid::new_v4().to_string(),
+    };
+    // jsonwebtoken encodes ES256 signatures in the raw r||s form JWS requires.
+    Ok(encode(&Header::new(Algorithm::ES256), &claims, key)?)
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // PKCS#8 PEM created by script/generate_keys.sh
+    let key = EncodingKey::from_ec_pem(&std::fs::read("keys/private_key.pem")?)?;
+    let client = reqwest::Client::new();
+
+    let response: serde_json::Value = client
+        .post("http://localhost:54323/graphql")
+        .bearer_auth(create_token(&key)?) // sign a new token for every request
+        .json(&json!({
+            "query": "mutation($input: RequestSmsInput!) { requestSms(input: $input) { id status } }",
+            "variables": { "input": { "phoneNumber": "01012345678", "message": "hello" } }
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+
+    println!("{response}");
+    Ok(())
+}
+```
+
+`EncodingKey`는 한 번만 만들어 재사용하고, 토큰은 요청마다 새로 서명한다. 토큰 수명이 최대 300초라서, 토큰을 캐시해 재사용하면 만료 후 401이 된다.
+
 ## 8. 향후 고려사항
 
 - **재전송 방지**: TLS 환경에서는 5분 수명으로 충분하다고 판단해 `jti` 중복 검사를 하지 않는다. 필요해지면 메모리 캐시에 `jti`를 `exp`까지 보관해 중복을 거부한다.
