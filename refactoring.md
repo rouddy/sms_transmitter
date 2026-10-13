@@ -21,7 +21,7 @@
 | P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
 | P1 | ✅ 설정 마이그레이션 잔재 정리 (완료) | Android | legacy 읽기·쓰기 제거, JSON 단일 소스 |
 | P1 | ✅ 피드백 응답시 발신 카운트 증가 분기 (완료) | Rocket | fallback 경로 제거, 단일 경로로 정리 |
-| P1 | `SettingsActivity` 분리 | Android | 단일 액티비티의 다중 책임 |
+| P1 | ✅ `SettingsActivity` 분리 (완료) | Android | 폼·파싱·오버레이·서버 등록 책임 분리 |
 | P2 | Retrofit 인스턴스 무한 캐시 | Android | `RetrofitClientProvider` |
 | P2 | `notifyDataSetChanged()` → DiffUtil | Android | RecyclerView 성능 |
 | P2 | `sendTextMessage` 전송 결과 확인 부재 | Android | "성공" != 실제 수신 |
@@ -105,14 +105,19 @@
   ```
 - **검증**: `cargo check`, `cargo clippy`, `cargo test` 통과(기존 21개 전체). 순수 삭제 위주 변경이고 `report_sms_result`는 GraphQL 컨텍스트에 의존하므로 전용 테스트 하네스는 추가하지 않았습니다.
 
-### 7. `SettingsActivity` 분리 (Android)
+### 7. `SettingsActivity` 분리 (Android) — ✅ 완료
 
-- **위치**: `SettingsActivity.kt`
-- **문제**:
-  - 액티비티 하나가 (1) 번호별 한도 UI를 프로그래매틱하게 생성·바인딩하고 (2) 입력 검증을 하고 (3) 오버레이 토글·권한 흐름을 관리하고 (4) 서버 등록까지 수행합니다. 한 파일이 네 가지 책임을 지니고 있습니다.
-- **개선 방향**:
-  - 번호별 한도 입력 UI 생성 로직(`createPhoneNumberLimitRow` 등)과 검증/파싱 로직(`parseLimitInput`, `collectPhoneNumberConfigs`)을 별도 클래스나 위젯으로 추출합니다.
-  - 오버레이 권한/토글 상태 머신(`OverlayEnablementStatus` 관련)도 별도 헬퍼로 분리하면 액티비티는 조립 역할만 남습니다.
+- **위치**: `sms_transmitter_Android/.../SettingsActivity.kt` (362행 → 100행)
+- **기존 문제**: 액티비티 하나가 (1) 번호별 한도 UI 생성·바인딩 (2) 입력 검증·파싱 (3) 오버레이 토글·권한 흐름 (4) 서버 등록·이전 서버 토큰 삭제를 모두 담당했습니다.
+- **적용 내용**:
+  - **(2) `SettingsInputParser`**: 전화번호 목록·한도·서버 URL 파싱과 한도 검증을 View 의존 없는 순수 객체로 추출했습니다. 한도 파싱의 `EMPTY_LIMIT(-1)`/`INVALID_LIMIT(-2)` 매직 넘버를 `LimitInput`(`Empty`/`Invalid`/`Value`) sealed 타입으로 바꿨습니다.
+  - **(1) `PhoneNumberLimitForm`**: 번호별 입력 행 생성(`createRow`), 번호 목록 변경 시 입력 중인 값 보존(`sync`), 입력값 수집(`collect`)을 컨테이너 `LinearLayout`을 감싸는 클래스로 옮겼습니다.
+  - **(3) `OverlayToggleController`**: 스위치 리스너, 바인딩 중 리스너 억제 플래그, 권한 요청 런처와 대기 상태, `UsageOverlayService` 시작/중지를 한곳에 모았습니다. 활성화 판단은 순수 함수 `OverlayEnablementStatus.evaluate(configs, hasPermission)`로 분리했습니다. 런처 등록 때문에 `onCreate`(STARTED 이전)에서 생성해야 하며 KDoc에 명시했습니다.
+  - **(4) `FcmTokenRegistrar.registerAfterServerChange`**: 서버 URL이 바뀌었으면 이전 서버에서 토큰을 삭제한 뒤 재등록하는 흐름을 기존 등록 공통 클래스로 옮겼습니다. 삭제 실패를 무시하는 동작은 유지했습니다.
+  - 액티비티에는 뷰 조회, 컴포넌트 조립, 저장 순서 조율만 남았습니다.
+- **호환성**: 사용자에게 보이는 동작은 동일합니다. 저장 시 오버레이 상태 확인과 토스트가 설정 저장 **뒤**로 옮겨졌지만, 판단에 쓰는 값(입력된 config, 권한)은 저장 전후로 같습니다. 서버 URL은 기존과 같이 공백이거나 `http(s)://host[:port]` 형식이 아니면 저장된 URL을 지웁니다.
+- **검증**: 순수 로직 단위 테스트 10개를 추가했습니다 — `SettingsInputParserTest` 7개(구분자·정규화·중복 제거, 한도 Empty/Value/Invalid·Int 오버플로, 하나라도 잘못되면 전체 거부, URL 끝 슬래시 제거·잘못된 형식 거부), `OverlayEnablementStatusTest` 3개(한도 필수, 한도를 권한보다 먼저 확인, 활성화 조건). `./gradlew :app:compileDebugKotlin`, `./gradlew :app:testDebugUnitTest` 통과(전체 34개). `PhoneNumberLimitForm`·`OverlayToggleController`는 View·권한에 의존해 단위 테스트하지 않았고, 실기기에서 설정 화면을 확인하지는 않았습니다.
+- **후속 확인 필요(기존 동작, 이번 범위 밖)**: 저장 직후 `finish()` → `onDestroy`에서 `disposables.clear()`가 호출되므로, FCM 토큰 조회가 그 전에 끝나면 진행 중인 서버 등록·삭제 요청이 취소될 수 있습니다. 액티비티 생명주기와 무관한 범위(예: 애플리케이션 스코프)에서 실행하는 방안을 1번(보일러플레이트 공통화)과 함께 검토할 만합니다.
 
 ---
 
@@ -188,7 +193,7 @@
 ## 제안 실행 순서
 
 1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. 남은 Rocket 항목은 P2(11, 13).
-2. **Android 구조 정리**: 타입 안전화(3) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
+2. **Android 구조 정리**: 타입 안전화(3)·`SettingsActivity` 분리(7) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2) 정리 (`status`(4)·legacy 잔재(5)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).
 5. **멱등성**: 결과 보고 멱등성(14) — 서버 가드를 먼저 넣고 Android 중복 제거를 뒤따르게 하는 것이 안전합니다.

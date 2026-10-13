@@ -26,6 +26,20 @@ class FcmTokenRegistrar(
         fetchToken { token -> registerToken(token) }
     }
 
+    /**
+     * Like [register], but if the configured server URL differs from [previousServerUrl],
+     * first deletes the token from the previous server. Deletion failures are ignored.
+     */
+    fun registerAfterServerChange(previousServerUrl: String?) {
+        val serverUrl = SmsLimitSettings(context).getConfig().serverUrl ?: return
+        fetchToken { token ->
+            if (previousServerUrl != null && previousServerUrl != serverUrl) {
+                deleteToken(previousServerUrl, token)
+            }
+            registerToken(token)
+        }
+    }
+
     /** Resolves the current FCM token and passes it to [onResolved]. */
     fun fetchToken(onResolved: (String) -> Unit) {
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
@@ -53,6 +67,17 @@ class FcmTokenRegistrar(
             .subscribe(
                 { Log.i(TAG, "FCM token registered with server.") },
                 onError,
+            )
+        disposables.add(disposable)
+    }
+
+    private fun deleteToken(serverUrl: String, token: String) {
+        val disposable = GraphQlClient("$serverUrl/").deleteFcmTokenByToken(token)
+            .subscribeOn(Schedulers.io())
+            .observeOn(AndroidSchedulers.mainThread())
+            .subscribe(
+                { Log.i(TAG, "FCM token deleted from previous server: $serverUrl") },
+                { Log.w(TAG, "Failed to delete FCM token from previous server (ignored): $serverUrl", it) },
             )
         disposables.add(disposable)
     }
