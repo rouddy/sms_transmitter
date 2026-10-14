@@ -36,6 +36,13 @@ object PhoneNumberResolver {
                 PackageManager.PERMISSION_GRANTED
     }
 
+    /**
+     * Trims surrounding whitespace, then removes spaces and hyphens. Returns null if nothing is left.
+     *
+     * Must stay identical to the server's `phone_number::normalize_phone_number`: the server sends
+     * the stored number back as `senderPhoneNumber`, which is matched against these settings and the
+     * SMS history. Both sides test the same cases.
+     */
     fun normalizePhoneNumber(raw: String?): String? {
         val number = raw
             ?.trim()

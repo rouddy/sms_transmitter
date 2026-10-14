@@ -45,6 +45,17 @@ pub struct ReportedSentCounts {
     pub monthly: i32,
 }
 
+/// Normalizes a sender phone number: trims surrounding whitespace, then removes spaces and
+/// hyphens. Returns `None` if nothing is left.
+///
+/// Must stay identical to Android `PhoneNumberResolver.normalizePhoneNumber`: the server sends
+/// the stored number back as `senderPhoneNumber`, and the app matches it against its own
+/// settings and SMS history. Both sides test the same cases.
+pub fn normalize_phone_number(raw: &str) -> Option<String> {
+    let number = raw.trim().replace([' ', '-'], "");
+    (!number.is_empty()).then_some(number)
+}
+
 const SENT_COUNT_COLUMNS: [Column; 4] = [
     Column::DailySentCount,
     Column::MonthlySentCount,
@@ -162,7 +173,7 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entity, Model, ReportedSentCounts};
+    use super::{normalize_phone_number, Entity, Model, ReportedSentCounts};
     use chrono::NaiveDate;
     use sea_orm::{
         ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Schema,
@@ -325,6 +336,24 @@ mod tests {
         m.increment_sent_counts(today);
         assert_eq!(m.daily_sent_count, 6);
         assert_eq!(m.monthly_sent_count, 71);
+    }
+
+    #[test]
+    fn normalize_phone_number_matches_android_rules() {
+        // Keep in sync with PhoneNumberResolverTest on Android.
+        for (raw, expected) in [
+            ("01012345678", Some("01012345678")),
+            ("010-1234-5678", Some("01012345678")),
+            (" 010 1234 5678 ", Some("01012345678")),
+            ("+82 10-1234-5678", Some("+821012345678")),
+            ("\t01012345678\n", Some("01012345678")),
+            ("(010)1234.5678", Some("(010)1234.5678")),
+            ("", None),
+            ("   ", None),
+            (" - ", None),
+        ] {
+            assert_eq!(normalize_phone_number(raw).as_deref(), expected, "{raw:?}");
+        }
     }
 
     fn reported(counted_on: NaiveDate, daily: i32, monthly: i32) -> ReportedSentCounts {

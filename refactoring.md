@@ -27,7 +27,7 @@
 | P2 | ✅ `sendTextMessage` 전송 결과 확인 부재 (완료) | Android | sent PendingIntent 결과 기준으로 보고 |
 | P2 | ✅ 토큰 뮤텍스 홀딩 / HTTP 타임아웃 부재 (완료) | Rocket | `firebase.rs` |
 | P2 | 빌드타임 로컬 IP 감지 | Android | `build.gradle.kts` |
-| P2 | 부가 정리 | Rocket | `db.rs`·매직 상수·정규화 공유 |
+| P2 | ✅ 부가 정리 (완료) | Rocket+Android | `db.rs` 인라인·매직 상수·정규화 규칙 통일 |
 | P1 | ✅ 결과 보고 멱등성 부재 (완료) | Rocket+Android | 기기 이력 기준 카운트 동기화, 첫 보고만 상태 전이, 중복 수신 차단 |
 
 ---
@@ -184,11 +184,16 @@
 - **문제**: 빌드 시점에 macOS `en0` 인터페이스 IP를 감지해 `BASE_URL`로 박아 넣는 로직이 빌드 스크립트와 개발 머신을 결합시킵니다. 다른 환경/CI 빌드에서는 의도와 다르게 동작할 수 있습니다(문서에 환경변수 우선이라고는 되어 있음).
 - **개선 방향**: 기본값을 명시적 placeholder/환경변수 필수로 바꾸고, "자동 감지"는 별도 dev 전용 설정으로 분리합니다.
 
-### 13. 부가 정리 (Rocket)
+### 13. 부가 정리 (Rocket) — ✅ 완료
 
 - ✅ **`db.rs` 인라인 (완료)**: `Database::connect`를 감싸기만 하던 7줄짜리 `db::connect`를 `main.rs`에서 `sea_orm::Database::connect`로 직접 호출하도록 바꾸고 `src/db.rs`와 `mod db`를 삭제했습니다. 호출처는 한 곳뿐이었고 동작 변화는 없습니다. `cargo fmt --check`, `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(43개) 통과.
 - ✅ **매직 상수 정리 (완료)**: `sms_request.rs`의 `ACTIVE_TOKEN_SECS: i64 = 7_776_000`(90일)을 `ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90)`로 바꾸고 용도를 doc 주석으로 남겼습니다. chrono 0.4.44에서 `Duration::days`가 `const fn`이라 상수로 둘 수 있습니다. 7,776,000초 = 90일이므로 값은 같습니다. `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(43개) 통과.
-- `fcm_token.rs`의 `register_fcm_token`과 Android `PhoneNumberResolver.normalizePhoneNumber`는 서로 다른 "전화번호 정규화" 구현이라, 규칙(트림·공백/하이픈 제거 등)이 벌어지지 않도록 양쪽 정규화 규칙을 문서화·공유할 필요(**cross-cutting**).
+- ✅ **전화번호 정규화 규칙 통일 (완료, cross-cutting)**:
+  - **기존 차이**: 서버 `register_fcm_token`은 `trim`만 했고, Android `PhoneNumberResolver.normalizePhoneNumber`는 `trim` 뒤 공백·하이픈까지 제거했습니다. 서버에 저장된 번호는 FCM `senderPhoneNumber`로 기기에 돌아가 설정·이력과 문자열로 비교되므로(한도 판단·발신 수 집계), 규칙이 다르면 같은 번호를 다른 번호로 취급할 수 있었습니다. 현재는 앱이 정규화한 값만 등록하므로 실제 불일치는 없었습니다.
+  - **적용 내용**: 서버에 `phone_number::normalize_phone_number`(trim → 공백·하이픈 제거 → 비면 `None`)를 추가해 `normalize_phone_numbers`에서 사용합니다. 서버 함수와 Android 함수의 doc 주석에 "서로 동일해야 하는 이유와 상대 구현 위치"를 적고, 서버 `CLAUDE.md`에도 규칙을 기록했습니다.
+  - **공유 방식**: 언어가 달라 코드를 공유할 수 없으므로, **같은 테스트 케이스 목록**을 양쪽에 두었습니다(서버 `normalize_phone_number_matches_android_rules`, Android `PhoneNumberResolverTest`). 하이픈·공백·국가번호·앞뒤 제어문자·그 외 기호 유지·빈 값 케이스를 포함하며, 한쪽 규칙을 바꾸면 다른 쪽 테스트도 함께 고치도록 주석으로 서로 가리킵니다.
+  - **범위 밖**: Android `getSmsManager`의 SIM 번호 매칭은 `PhoneNumberUtils.normalizeNumber`를 쓰는 별도 비교라 그대로 두었습니다. `request_sms`의 수신 번호도 정규화 대상이 아닙니다.
+  - **검증**: `cargo fmt`, `cargo clippy --all-targets`(기존 경고 2건 외 없음), `cargo test`(44개), `./gradlew :app:testDebugUnitTest`(42개) 통과.
 
 ---
 
@@ -225,7 +230,7 @@
 
 ## 제안 실행 순서
 
-1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. 남은 Rocket 항목은 P2(11, 13).
+1. **Rocket 마무리**: `status` enum 전환(4)·피드백 발신 카운트 분기 정리(6) 모두 완료. P2(11, 13)도 완료.
 2. **Android 구조 정리**: 타입 안전화(3)·`SettingsActivity` 분리(7) 완료 → GraphQL 보일러플레이트 공통화(1) → 하드코딩 문자열(2).
 3. **타입/문자열/설정 정리**: 하드코딩 문자열(2) 정리 (`status`(4)·legacy 잔재(5)는 완료).
 4. **마이너 폴리시**: P2 항목(8~13) — DiffUtil, Retrofit 캐시, 빌드 설정 등 후순위(타임아웃·재시도(11)는 완료).

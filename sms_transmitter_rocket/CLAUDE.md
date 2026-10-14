@@ -47,7 +47,7 @@ Layers:
 
 Status values (`Sending`/`Sent`/`Failed`) are plain strings in SQLite, mapped to the `SmsStatus` enum in the GraphQL layer.
 
-Phone numbers are globally unique across devices. `registerFcmToken` upserts by token: refreshes device info, deletes that token's numbers missing from the input while preserving counts for kept ones, and reassigns a number held by another token to this one (its counts restart from the reported `sentCounts`, or 0). Counts reported for kept numbers are merged the same way.
+Phone numbers are globally unique across devices. `registerFcmToken` normalizes them with `phone_number::normalize_phone_number` (trim, then drop spaces/hyphens), which must stay identical to Android `PhoneNumberResolver.normalizePhoneNumber` — both sides test the same cases. It upserts by token: refreshes device info, deletes that token's numbers missing from the input while preserving counts for kept ones, and reassigns a number held by another token to this one (its counts restart from the reported `sentCounts`, or 0). Counts reported for kept numbers are merged the same way.
 
 ## Conventions
 

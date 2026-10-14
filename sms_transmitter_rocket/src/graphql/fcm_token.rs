@@ -203,10 +203,9 @@ impl FcmTokenQuery {
 fn normalize_phone_numbers(phone_numbers: Vec<PhoneNumberInput>) -> Vec<PhoneNumberInput> {
     let mut normalized = HashMap::<String, PhoneNumberInput>::new();
     for input in phone_numbers {
-        let phone_number = input.phone_number.trim().to_string();
-        if phone_number.is_empty() {
+        let Some(phone_number) = phone_number::normalize_phone_number(&input.phone_number) else {
             continue;
-        }
+        };
         normalized.insert(
             phone_number.clone(),
             PhoneNumberInput {
