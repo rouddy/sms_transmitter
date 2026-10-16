@@ -44,25 +44,24 @@ class SmsHistoryAdapter(
 
         fun bind(item: SmsHistoryItem) {
             val context = itemView.context
-            textTimestamp.text = "시간: ${dateFormatter.format(Date(item.createdAtMillis))}"
-            textSender.text = "${context.getString(R.string.sender_phone_number_label)}: ${item.senderPhoneNumber ?: "-"}"
-            textReceiver.text = "수신번호: ${item.phoneNumber}"
-            textMessage.text = "메시지: ${item.message}"
+            val formattedTime = dateFormatter.format(Date(item.createdAtMillis))
+            textTimestamp.text = context.getString(R.string.history_time, formattedTime)
+            textSender.text = context.getString(R.string.history_sender, item.senderPhoneNumber ?: "-")
+            textReceiver.text = context.getString(R.string.history_receiver, item.phoneNumber)
+            textMessage.text = context.getString(R.string.history_message, item.message)
 
             val smsStatus = when {
                 item.smsPending -> context.getString(R.string.sms_pending)
                 item.smsSuccess -> context.getString(R.string.sms_success)
                 else -> context.getString(R.string.sms_failure)
             }
-            
-            val statusText = buildString {
-                append("SMS: $smsStatus")
-                if (!item.smsError.isNullOrBlank()) {
-                    append(" (${item.smsError})")
-                }
+
+            textStatus.text = if (!item.smsError.isNullOrBlank()) {
+                context.getString(R.string.history_status_with_error, smsStatus, item.smsError)
+            } else {
+                context.getString(R.string.history_status, smsStatus)
             }
-            textStatus.text = statusText
-            
+
             val statusColor = when {
                 item.smsPending -> android.R.color.holo_orange_dark
                 item.smsSuccess -> android.R.color.holo_green_dark

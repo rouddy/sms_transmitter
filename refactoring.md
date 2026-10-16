@@ -16,7 +16,7 @@
 | 우선순위 | 항목 | 영역 | 핵심 문제 |
 |---|---|---|---|
 | P1 | GraphQL 호출 보일러플레이트 공통화 | Android | subscribeOn/observeOn 중복 |
-| P1 | 하드코딩된 한국어 문자열 | Android | `SmsHistoryAdapter` |
+| P1 | ✅ 하드코딩된 한국어 문자열 (완료) | Android | `strings.xml` 리소스로 분리 |
 | P1 | ✅ GraphQL 응답 타입 안전화 (완료) | Android | 연산별 응답 DTO 적용, 수동 캐스팅·silent skip 제거 |
 | P1 | ✅ `status` 문자열 타이핑 (완료) | Rocket | SeaORM enum 적용, silent fallback 제거 |
 | P1 | ✅ 설정 마이그레이션 잔재 정리 (완료) | Android | legacy 읽기·쓰기 제거, JSON 단일 소스 |
@@ -44,13 +44,15 @@
   - 네트워크 호출 전용 확장 함수(`Single<T>.executeNetwork(onSuccess, onError)`)나 공용 `Disposable` 관리 헬퍼를 도입합니다.
   - 더 근본적으로는 RxJava3를 **Kotlin Coroutines + `suspendCancellableCoroutine`(또는 Retrofit suspend 지원)**로 전환하는 것도 고려할 만합니다.
 
-### 2. 하드코딩된 한국어 문자열 → strings.xml (Android)
+### 2. 하드코딩된 한국어 문자열 → strings.xml (Android) — ✅ 완료
 
-- **위치**: `SmsHistoryAdapter.kt` `bind` (45~62행)
-- **문제**:
-  - `"시간: ..."`, `"수신번호: ..."`, `"메시지: ..."`, `"SMS: $smsStatus"` 가 코드에 하드코딩되어 있습니다. 나머지 문자열은 대부분 `strings.xml`에 있는데 이 파일만 예외로, i18n이 깨져 있습니다.
-- **개선 방향**:
-  - 전부 `strings.xml` 리소스로 옮기고 `getString(R.string...., args)` 포맷을 사용합니다. 기존 `sms_success`/`sms_failure` 리소스도 이미 있으므로 `"SMS: "` 접두어 문구만 리소스로 추가하면 됩니다.
+- **위치**: `SmsHistoryAdapter.kt` `bind`, `strings.xml`
+- **기존 문제**:
+  - `"시간: ..."`, `"수신번호: ..."`, `"메시지: ..."`, `"SMS: $smsStatus"` 가 코드에 하드코딩되어 있어 i18n이 지원되지 않았습니다.
+- **적용 내용**:
+  - `strings.xml`에 `history_time`, `history_sender`, `history_receiver`, `history_message`, `history_status`, `history_status_with_error` 문자열 리소스를 추가했습니다.
+  - `SmsHistoryAdapter.kt`에서 하드코딩된 문자열을 전부 `context.getString(R.string...., args)` 형태의 포맷 리소스 사용으로 변경했습니다.
+- **검증**: `./gradlew :app:assembleDebug`, `./gradlew :app:testDebugUnitTest` 빌드 및 테스트 통과 (전체 42개).
 
 ### 3. GraphQL 응답 타입 안전화 (Android) — ✅ 완료
 
