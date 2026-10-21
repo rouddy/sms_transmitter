@@ -36,6 +36,33 @@ impl Related<super::fcm_token::Entity> for Entity {
 
 impl ActiveModelBehavior for ActiveModel {}
 
+/// Sent counts tallied by the device from its SMS history: the day count for `counted_on`
+/// (device-local date) and the month count for the month containing it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReportedSentCounts {
+    pub counted_on: NaiveDate,
+    pub daily: i32,
+    pub monthly: i32,
+}
+
+/// Normalizes a sender phone number: trims surrounding whitespace, then removes spaces and
+/// hyphens. Returns `None` if nothing is left.
+///
+/// Must stay identical to Android `PhoneNumberResolver.normalizePhoneNumber`: the server sends
+/// the stored number back as `senderPhoneNumber`, and the app matches it against its own
+/// settings and SMS history. Both sides test the same cases.
+pub fn normalize_phone_number(raw: &str) -> Option<String> {
+    let number = raw.trim().replace([' ', '-'], "");
+    (!number.is_empty()).then_some(number)
+}
+
+const SENT_COUNT_COLUMNS: [Column; 4] = [
+    Column::DailySentCount,
+    Column::MonthlySentCount,
+    Column::LastDailyReset,
+    Column::LastMonthlyReset,
+];
+
 impl Model {
     pub fn effective_daily_sent_count(&self, today: NaiveDate) -> i32 {
         if self.last_daily_reset < today {
@@ -93,6 +120,39 @@ impl Model {
         daily_ratio * 10.0 + monthly_ratio
     }
 
+    /// Merges counts reported by the device, whose SMS history is the source of truth.
+    ///
+    /// Reports can arrive out of order, and a reinstalled app reports from an empty history,
+    /// so counts never decrease within a period. Counts for a period other than the server's
+    /// current one (device clock or time zone differs around midnight) are ignored; the next
+    /// report or registration catches up.
+    pub fn merge_reported_sent_counts(&mut self, reported: ReportedSentCounts, today: NaiveDate) {
+        if reported.counted_on == today {
+            self.daily_sent_count = self.effective_daily_sent_count(today).max(reported.daily);
+            self.last_daily_reset = today;
+        }
+        if (reported.counted_on.year(), reported.counted_on.month())
+            == (today.year(), today.month())
+        {
+            self.monthly_sent_count = self
+                .effective_monthly_sent_count(today)
+                .max(reported.monthly);
+            self.last_monthly_reset = today;
+        }
+    }
+
+    /// Converts to an `ActiveModel` that persists the sent-count columns.
+    ///
+    /// `Model::into()` marks every column `Unchanged`, so updating that `ActiveModel` after
+    /// changing counts in memory would write nothing.
+    pub fn into_sent_counts_active_model(self) -> ActiveModel {
+        let mut active: ActiveModel = self.into();
+        for column in SENT_COUNT_COLUMNS {
+            active.reset(column);
+        }
+        active
+    }
+
     pub fn increment_sent_counts(&mut self, today: NaiveDate) {
         if self.last_daily_reset < today {
             self.daily_sent_count = 0;
@@ -113,8 +173,11 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::Model;
+    use super::{normalize_phone_number, Entity, Model, ReportedSentCounts};
     use chrono::NaiveDate;
+    use sea_orm::{
+        ActiveModelTrait, ConnectionTrait, Database, DatabaseConnection, EntityTrait, Schema,
+    };
     use uuid::Uuid;
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -273,5 +336,132 @@ mod tests {
         m.increment_sent_counts(today);
         assert_eq!(m.daily_sent_count, 6);
         assert_eq!(m.monthly_sent_count, 71);
+    }
+
+    #[test]
+    fn normalize_phone_number_matches_android_rules() {
+        // Keep in sync with PhoneNumberResolverTest on Android.
+        for (raw, expected) in [
+            ("01012345678", Some("01012345678")),
+            ("010-1234-5678", Some("01012345678")),
+            (" 010 1234 5678 ", Some("01012345678")),
+            ("+82 10-1234-5678", Some("+821012345678")),
+            ("\t01012345678\n", Some("01012345678")),
+            ("(010)1234.5678", Some("(010)1234.5678")),
+            ("", None),
+            ("   ", None),
+            (" - ", None),
+        ] {
+            assert_eq!(normalize_phone_number(raw).as_deref(), expected, "{raw:?}");
+        }
+    }
+
+    fn reported(counted_on: NaiveDate, daily: i32, monthly: i32) -> ReportedSentCounts {
+        ReportedSentCounts {
+            counted_on,
+            daily,
+            monthly,
+        }
+    }
+
+    #[test]
+    fn merge_takes_reported_counts_when_higher() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 2, 20, today, date(2026, 8, 1));
+        m.merge_reported_sent_counts(reported(today, 5, 30), today);
+        assert_eq!((m.daily_sent_count, m.monthly_sent_count), (5, 30));
+        assert_eq!((m.last_daily_reset, m.last_monthly_reset), (today, today));
+    }
+
+    #[test]
+    fn merge_never_decreases_counts_within_period() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 5, 30, today, today);
+        m.merge_reported_sent_counts(reported(today, 0, 0), today);
+        assert_eq!((m.daily_sent_count, m.monthly_sent_count), (5, 30));
+    }
+
+    #[test]
+    fn merge_replaces_counts_from_a_past_period() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 9, 90, date(2026, 8, 26), date(2026, 7, 31));
+        m.merge_reported_sent_counts(reported(today, 1, 4), today);
+        assert_eq!((m.daily_sent_count, m.monthly_sent_count), (1, 4));
+        assert_eq!((m.last_daily_reset, m.last_monthly_reset), (today, today));
+    }
+
+    #[test]
+    fn merge_applies_only_monthly_when_reported_day_differs_in_same_month() {
+        let today = date(2026, 8, 27);
+        let mut m = model(10, 100, 3, 30, today, today);
+        m.merge_reported_sent_counts(reported(date(2026, 8, 26), 8, 40), today);
+        assert_eq!((m.daily_sent_count, m.monthly_sent_count), (3, 40));
+    }
+
+    #[test]
+    fn merge_ignores_counts_from_another_month() {
+        let today = date(2026, 9, 1);
+        let mut m = model(10, 100, 0, 0, today, today);
+        m.merge_reported_sent_counts(reported(date(2026, 8, 31), 8, 80), today);
+        assert_eq!((m.daily_sent_count, m.monthly_sent_count), (0, 0));
+    }
+
+    async fn db_with_row(row: &Model) -> DatabaseConnection {
+        let db = Database::connect("sqlite::memory:").await.unwrap();
+        // Only phone_numbers is created; skip the fcm_tokens foreign key.
+        db.execute_unprepared("PRAGMA foreign_keys = OFF")
+            .await
+            .unwrap();
+        let backend = db.get_database_backend();
+        let stmt = Schema::new(backend).create_table_from_entity(Entity);
+        db.execute(backend.build(&stmt)).await.unwrap();
+        let active: super::ActiveModel = row.clone().into();
+        Entity::insert(active.reset_all()).exec(&db).await.unwrap();
+        db
+    }
+
+    #[tokio::test]
+    async fn plain_into_does_not_persist_count_changes() {
+        let today = date(2026, 8, 27);
+        let original = model(10, 100, 0, 0, today, today);
+        let db = db_with_row(&original).await;
+
+        let mut changed = original.clone();
+        changed.increment_sent_counts(today);
+        let active: super::ActiveModel = changed.into();
+        active.update(&db).await.unwrap();
+
+        let stored = Entity::find_by_id(original.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.daily_sent_count, 0);
+    }
+
+    #[tokio::test]
+    async fn sent_counts_active_model_persists_count_changes() {
+        let today = date(2026, 8, 27);
+        let original = model(10, 100, 0, 0, date(2026, 8, 26), date(2026, 7, 31));
+        let db = db_with_row(&original).await;
+
+        let mut changed = original.clone();
+        changed.increment_sent_counts(today);
+        changed
+            .into_sent_counts_active_model()
+            .update(&db)
+            .await
+            .unwrap();
+
+        let stored = Entity::find_by_id(original.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((stored.daily_sent_count, stored.monthly_sent_count), (1, 1));
+        assert_eq!(
+            (stored.last_daily_reset, stored.last_monthly_reset),
+            (today, today)
+        );
     }
 }

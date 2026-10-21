@@ -3,6 +3,7 @@
     package="com.rouddy.smstransmitter">
 
     <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -20,24 +21,33 @@
         android:theme="@style/Theme.SmsTransmitter">
 
         <activity
+            android:name=".ui.main.MainActivity"
+            android:exported="false" />
+        <!-- Keeps the launcher component name from before MainActivity moved to ui.main,
+             so home screen shortcuts that point at it keep working. -->
+        <activity-alias
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:targetActivity=".ui.main.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
-        <activity android:name=".SettingsActivity" />
+        </activity-alias>
+        <activity android:name=".ui.settings.SettingsActivity" />
 
         <service
-            android:name=".FirebaseMessageReceiverService"
+            android:name=".fcm.FirebaseMessageReceiverService"
             android:exported="false">
             <intent-filter>
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
         <service
-            android:name=".UsageOverlayService"
+            android:name=".ui.overlay.UsageOverlayService"
+            android:exported="false" />
+        <receiver
+            android:name=".sms.SmsSentReceiver"
             android:exported="false" />
     </application>
 

@@ -1,4 +1,4 @@
-package com.rouddy.smstransmitter
+package com.rouddy.smstransmitter.ui.main
 
 import android.Manifest
 import android.content.Intent
@@ -16,6 +16,13 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.rouddy.smstransmitter.R
+import com.rouddy.smstransmitter.data.SmsHistoryDatabase
+import com.rouddy.smstransmitter.data.SmsLimitSettings
+import com.rouddy.smstransmitter.fcm.FcmTokenRegistrar
+import com.rouddy.smstransmitter.sms.SmsUsageCalculator
+import com.rouddy.smstransmitter.ui.overlay.UsageOverlayService
+import com.rouddy.smstransmitter.ui.settings.SettingsActivity
 import io.reactivex.rxjava3.disposables.CompositeDisposable
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -37,16 +44,17 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
             val smsGranted = result[Manifest.permission.SEND_SMS] ?: hasPermission(Manifest.permission.SEND_SMS)
             val readPhoneNumbersGranted = result[Manifest.permission.READ_PHONE_NUMBERS] ?: hasPermission(Manifest.permission.READ_PHONE_NUMBERS)
+            val readPhoneStateGranted = result[Manifest.permission.READ_PHONE_STATE] ?: hasPermission(Manifest.permission.READ_PHONE_STATE)
 
             if (!smsGranted) {
                 Toast.makeText(this, R.string.sms_permission_required, Toast.LENGTH_LONG).show()
             }
 
-            if (!readPhoneNumbersGranted) {
+            if (!readPhoneNumbersGranted || !readPhoneStateGranted) {
                 Toast.makeText(this, R.string.phone_number_permission_required, Toast.LENGTH_LONG).show()
             }
 
-            if (smsGranted && readPhoneNumbersGranted) {
+            if (smsGranted && readPhoneNumbersGranted && readPhoneStateGranted) {
                 smsLimitSettings.initializePhoneNumbersIfNeeded(this)
                 registerFcmTokenWithServer()
             }
@@ -110,6 +118,9 @@ class MainActivity : AppCompatActivity() {
         }
         if (!hasPermission(Manifest.permission.READ_PHONE_NUMBERS)) {
             permissionsToRequest.add(Manifest.permission.READ_PHONE_NUMBERS)
+        }
+        if (!hasPermission(Manifest.permission.READ_PHONE_STATE)) {
+            permissionsToRequest.add(Manifest.permission.READ_PHONE_STATE)
         }
         if (permissionsToRequest.isNotEmpty()) {
             permissionLauncher.launch(permissionsToRequest.toTypedArray())

@@ -1,4 +1,4 @@
-package com.rouddy.smstransmitter
+package com.rouddy.smstransmitter.fcm
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull

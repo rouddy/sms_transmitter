@@ -1,4 +1,4 @@
-package com.rouddy.smstransmitter
+package com.rouddy.smstransmitter.fcm
 
 data class FcmPayload(
     val senderPhoneNumber: String,

@@ -12,12 +12,11 @@ use uuid::Uuid;
 
 use crate::entity::{fcm_token, phone_number, sms_request};
 use crate::firebase::FirebaseClient;
+use crate::graphql::phone_number::SentCountsInput;
 
-const ACTIVE_TOKEN_SECS: i64 = 7_776_000; // 90 days
+/// Only devices whose FCM token was seen within this window are picked as senders.
+const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
 
-pub const STATUS_SENDING: &str = "Sending";
-pub const STATUS_SENT: &str = "Sent";
-pub const STATUS_FAILED: &str = "Failed";
 const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -27,13 +26,12 @@ pub enum SmsStatus {
     Failed,
 }
 
-impl SmsStatus {
-    fn from_str(s: &str) -> Self {
-        match s {
-            STATUS_SENDING => Self::Sending,
-            STATUS_SENT => Self::Sent,
-            STATUS_FAILED => Self::Failed,
-            _ => Self::Failed,
+impl From<sms_request::SmsStatus> for SmsStatus {
+    fn from(status: sms_request::SmsStatus) -> Self {
+        match status {
+            sms_request::SmsStatus::Sending => Self::Sending,
+            sms_request::SmsStatus::Sent => Self::Sent,
+            sms_request::SmsStatus::Failed => Self::Failed,
         }
     }
 }
@@ -57,7 +55,7 @@ pub struct SmsRequest {
 impl From<sms_request::Model> for SmsRequest {
     fn from(m: sms_request::Model) -> Self {
         Self {
-            status: SmsStatus::from_str(&m.status),
+            status: m.status.into(),
             assigned_device_id: m.assigned_token_id.map(|id| ID(id.to_string())),
             assigned_phone_number_id: m.assigned_phone_number_id.map(|id| ID(id.to_string())),
             id: ID(m.id.to_string()),
@@ -69,6 +67,28 @@ impl From<sms_request::Model> for SmsRequest {
             error: m.error,
             created_at: m.created_at.to_string(),
             updated_at: m.updated_at.to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SmsStatus;
+    use crate::entity::sms_request;
+    use async_graphql::{InputType, Value};
+
+    #[test]
+    fn status_conversion_preserves_graphql_values() {
+        for (status, expected) in [
+            (sms_request::SmsStatus::Sending, "SENDING"),
+            (sms_request::SmsStatus::Sent, "SENT"),
+            (sms_request::SmsStatus::Failed, "FAILED"),
+        ] {
+            let status = SmsStatus::from(status);
+            assert_eq!(
+                status.to_value(),
+                Value::Enum(async_graphql::Name::new(expected))
+            );
         }
     }
 }
@@ -85,6 +105,9 @@ pub struct ReportSmsResultInput {
     pub request_id: ID,
     pub success: bool,
     pub error: Option<String>,
+    /// Sender's sent counts after this result. Omitted by older app versions, in which
+    /// case a successful report increments the counts instead.
+    pub sent_counts: Option<SentCountsInput>,
 }
 
 #[derive(Default)]
@@ -105,10 +128,7 @@ impl SmsRequestMutation {
         let txn = db.begin().await?;
 
         let tokens = fcm_token::Entity::find()
-            .filter(
-                fcm_token::Column::LastAccessTime
-                    .gt(now - chrono::Duration::seconds(ACTIVE_TOKEN_SECS)),
-            )
+            .filter(fcm_token::Column::LastAccessTime.gt(now - ACTIVE_TOKEN_WINDOW))
             .all(&txn)
             .await?;
         let token_by_id = tokens
@@ -142,7 +162,6 @@ impl SmsRequestMutation {
 
         let request_id = Uuid::new_v4();
 
-        let status = STATUS_SENDING.to_string();
         let (selected_phone_number, token) = selected.unwrap();
         let assigned_token_id = Some(token.id);
         let assigned_phone_number_id = Some(selected_phone_number.id);
@@ -154,7 +173,7 @@ impl SmsRequestMutation {
             callback_url: Set(input.callback_url.clone()),
             callback_response_code: Set(None),
             callback_response_body: Set(None),
-            status: Set(status),
+            status: Set(sms_request::SmsStatus::Sending),
             assigned_token_id: Set(assigned_token_id),
             assigned_phone_number_id: Set(assigned_phone_number_id),
             error: Set(None),
@@ -193,7 +212,7 @@ impl SmsRequestMutation {
                         .await
                     {
                         let mut active: sms_request::ActiveModel = req.into();
-                        active.status = Set(STATUS_FAILED.to_string());
+                        active.status = Set(sms_request::SmsStatus::Failed);
                         active.error = Set(Some(e.to_string()));
                         active.updated_at = Set(Local::now().naive_local());
                         let _ = active.update(&db_clone).await;
@@ -222,30 +241,38 @@ impl SmsRequestMutation {
             .await?
             .ok_or_else(|| async_graphql::Error::new("SMS request not found"))?;
 
-        if input.success {
-            if let Some(phone_number_id) = request.assigned_phone_number_id {
-                let mut phone_number_model = phone_number::Entity::find_by_id(phone_number_id)
-                    .one(&txn)
-                    .await?
-                    .ok_or_else(|| async_graphql::Error::new("assigned phone number not found"))?;
-                let today = now.date();
-                phone_number_model.increment_sent_counts(today);
-                let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
-                phone_number_active.update(&txn).await?;
-            } else if let Some(token_id) = request.assigned_token_id {
-                let token = fcm_token::Entity::find_by_id(token_id)
-                    .one(&txn)
-                    .await?
-                    .ok_or_else(|| async_graphql::Error::new("FCM token not found"))?;
-                let fallback_phone_number = phone_number::Entity::find()
-                    .filter(phone_number::Column::FcmTokenId.eq(token.id))
-                    .one(&txn)
-                    .await?;
-                if let Some(mut phone_number_model) = fallback_phone_number {
-                    phone_number_model.increment_sent_counts(now.date());
-                    let phone_number_active: phone_number::ActiveModel = phone_number_model.into();
-                    phone_number_active.update(&txn).await?;
+        let is_first_report = request.status == sms_request::SmsStatus::Sending;
+        if input.sent_counts.is_some() || (input.success && is_first_report) {
+            // `request_sms`는 항상 `assigned_phone_number_id`를 채운다. NULL인 행은
+            // m20260813_000004(한도를 번호 단위로 이전) 이전에 생성돼 백필 시 NULL로
+            // 남은 요청뿐이며, 갱신할 번호를 특정할 수 없으므로 카운트를 생략한다.
+            match request.assigned_phone_number_id {
+                Some(phone_number_id) => {
+                    match phone_number::Entity::find_by_id(phone_number_id)
+                        .one(&txn)
+                        .await?
+                    {
+                        Some(mut phone_number_model) => {
+                            match input.sent_counts {
+                                // 기기 이력 기준으로 맞추므로 중복 보고에도 안전하다.
+                                Some(counts) => phone_number_model
+                                    .merge_reported_sent_counts(counts.into(), now.date()),
+                                // 카운트를 보내지 않는 구버전 앱: 첫 성공 보고에서만 증가.
+                                None => phone_number_model.increment_sent_counts(now.date()),
+                            }
+                            phone_number_model
+                                .into_sent_counts_active_model()
+                                .update(&txn)
+                                .await?;
+                        }
+                        None => tracing::warn!(
+                            "Assigned phone number {phone_number_id} of SMS request {request_id} no longer exists; skipping sent-count update"
+                        ),
+                    }
                 }
+                None => tracing::warn!(
+                    "SMS request {request_id} has no assigned phone number; skipping sent-count update"
+                ),
             }
         }
 
@@ -259,13 +286,24 @@ impl SmsRequestMutation {
             }
         }
 
+        // FCM은 at-least-once 전달이라 같은 요청이 여러 번 보고될 수 있다. 상태 전이와
+        // 콜백은 첫 보고에서만 수행하고, 이후 보고는 카운트 동기화만 한 뒤 성공으로 응답한다.
+        if !is_first_report {
+            tracing::info!(
+                "SMS request {request_id} already finalized as {:?}; ignoring repeated result report",
+                request.status
+            );
+            txn.commit().await?;
+            return Ok(true);
+        }
+
         let callback_url = request.callback_url.clone();
         let mut active: sms_request::ActiveModel = request.into();
         if input.success {
-            active.status = Set(STATUS_SENT.to_string());
+            active.status = Set(sms_request::SmsStatus::Sent);
             active.error = Set(None);
         } else {
-            active.status = Set(STATUS_FAILED.to_string());
+            active.status = Set(sms_request::SmsStatus::Failed);
             active.error = Set(input.error);
         }
         active.updated_at = Set(now);
@@ -276,7 +314,8 @@ impl SmsRequestMutation {
         if let Some(callback_url) = callback_url {
             match invoke_callback_url(&callback_url).await {
                 Ok(response) => {
-                    save_callback_response(db, request_id, response.status_code, response.body).await;
+                    save_callback_response(db, request_id, response.status_code, response.body)
+                        .await;
                     if !response.is_success {
                         tracing::error!(
                             "Callback URL returned non-success status for request {:?}: {}",

@@ -1,4 +1,4 @@
-package com.rouddy.smstransmitter
+package com.rouddy.smstransmitter.ui.main
 
 import android.view.LayoutInflater
 import android.view.View
@@ -6,6 +6,8 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.rouddy.smstransmitter.R
+import com.rouddy.smstransmitter.data.SmsHistoryItem
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -42,29 +44,28 @@ class SmsHistoryAdapter(
 
         fun bind(item: SmsHistoryItem) {
             val context = itemView.context
-            textTimestamp.text = "시간: ${dateFormatter.format(Date(item.createdAtMillis))}"
-            textSender.text = "${context.getString(R.string.sender_phone_number_label)}: ${item.senderPhoneNumber ?: "-"}"
-            textReceiver.text = "수신번호: ${item.phoneNumber}"
-            textMessage.text = "메시지: ${item.message}"
+            val formattedTime = dateFormatter.format(Date(item.createdAtMillis))
+            textTimestamp.text = context.getString(R.string.history_time, formattedTime)
+            textSender.text = context.getString(R.string.history_sender, item.senderPhoneNumber ?: "-")
+            textReceiver.text = context.getString(R.string.history_receiver, item.phoneNumber)
+            textMessage.text = context.getString(R.string.history_message, item.message)
 
-            val smsStatus = if (item.smsSuccess) {
-                context.getString(R.string.sms_success)
-            } else {
-                context.getString(R.string.sms_failure)
+            val smsStatus = when {
+                item.smsPending -> context.getString(R.string.sms_pending)
+                item.smsSuccess -> context.getString(R.string.sms_success)
+                else -> context.getString(R.string.sms_failure)
             }
-            
-            val statusText = buildString {
-                append("SMS: $smsStatus")
-                if (!item.smsError.isNullOrBlank()) {
-                    append(" (${item.smsError})")
-                }
-            }
-            textStatus.text = statusText
-            
-            val statusColor = if (item.smsSuccess) {
-                android.R.color.holo_green_dark
+
+            textStatus.text = if (!item.smsError.isNullOrBlank()) {
+                context.getString(R.string.history_status_with_error, smsStatus, item.smsError)
             } else {
-                android.R.color.holo_red_dark
+                context.getString(R.string.history_status, smsStatus)
+            }
+
+            val statusColor = when {
+                item.smsPending -> android.R.color.holo_orange_dark
+                item.smsSuccess -> android.R.color.holo_green_dark
+                else -> android.R.color.holo_red_dark
             }
             textStatus.setTextColor(ContextCompat.getColor(context, statusColor))
         }

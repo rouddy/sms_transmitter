@@ -4,3 +4,6 @@ firebase-credentials.json
 *.db
 *.db-shm
 *.db-wal
+*.pem
+# 인증 키쌍 (script/generate_keys.sh로 생성)
+keys/

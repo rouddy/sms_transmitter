@@ -1,4 +1,4 @@
-package com.rouddy.smstransmitter
+package com.rouddy.smstransmitter.ui.overlay
 
 import android.app.Service
 import android.content.Context
@@ -16,6 +16,10 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.rouddy.smstransmitter.R
+import com.rouddy.smstransmitter.data.SmsHistoryDatabase
+import com.rouddy.smstransmitter.data.SmsLimitSettings
+import com.rouddy.smstransmitter.sms.SmsUsageCalculator
 
 class UsageOverlayService : Service() {
     private lateinit var windowManager: WindowManager

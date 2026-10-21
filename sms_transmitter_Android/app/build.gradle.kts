@@ -34,7 +34,7 @@ android {
         minSdk = 33
         targetSdk = 34
         versionCode = 2
-        versionName = "0.2.1"
+        versionName = "0.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -60,6 +60,30 @@ android {
 
         buildConfigField("String", "BASE_URL", "\"$envApiUrl\"")
         buildConfigField("int", "PORT", envApiPort)
+
+        // 2. 서버 인증용 공유 개인키를 APK에 포함
+        // sms_transmitter_rocket/script/generate_keys.sh로 생성한 키를 기본으로 사용하고,
+        // 다른 위치의 키를 쓰려면 SMS_TRANSMITTER_PRIVATE_KEY_PATH 환경변수를 설정하세요.
+        val authPrivateKeyFile = System.getenv("SMS_TRANSMITTER_PRIVATE_KEY_PATH")
+            ?.let { file(it) }
+            ?: rootProject.file("../sms_transmitter_rocket/keys/private_key.pem")
+        if (!authPrivateKeyFile.isFile) {
+            throw GradleException(
+                "인증 개인키가 없습니다: ${authPrivateKeyFile.path}\n" +
+                    "sms_transmitter_rocket/script/generate_keys.sh를 실행하거나 " +
+                    "SMS_TRANSMITTER_PRIVATE_KEY_PATH를 설정하세요."
+            )
+        }
+        val authPrivateKeyPem = authPrivateKeyFile.readText()
+        if (!authPrivateKeyPem.contains("-----BEGIN PRIVATE KEY-----")) {
+            throw GradleException("${authPrivateKeyFile.path}는 PKCS#8 PEM(BEGIN PRIVATE KEY) 형식이어야 합니다.")
+        }
+        val authPrivateKeyBase64 = authPrivateKeyPem.lines()
+            .filterNot { it.startsWith("-----") }
+            .joinToString("") { it.trim() }
+        println(">>> AUTH_PRIVATE_KEY = ${authPrivateKeyFile.path}")
+
+        buildConfigField("String", "AUTH_PRIVATE_KEY", "\"$authPrivateKeyBase64\"")
     }
 
     buildFeatures {

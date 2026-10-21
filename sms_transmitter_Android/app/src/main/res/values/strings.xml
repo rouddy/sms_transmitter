@@ -5,8 +5,15 @@
     <string name="app_name">SMS Transmitter</string>
     <string name="history_title">SMS 전송 이력</string>
     <string name="no_history">아직 저장된 전송 이력이 없습니다.</string>
+    <string name="history_time">시간: %1$s</string>
+    <string name="history_sender">발신 번호: %1$s</string>
+    <string name="history_receiver">수신번호: %1$s</string>
+    <string name="history_message">메시지: %1$s</string>
+    <string name="history_status">SMS: %1$s</string>
+    <string name="history_status_with_error">SMS: %1$s (%2$s)</string>
     <string name="sms_success">성공</string>
     <string name="sms_failure">실패</string>
+    <string name="sms_pending">전송 중</string>
     <string name="sms_permission_required">SMS 발송 권한이 필요합니다.</string>
     <string name="settings">설정</string>
     <string name="daily_limit_label">하루 최대 발신 가능 SMS 횟수</string>

@@ -7,22 +7,31 @@ use rocket::State;
 use sea_orm_migration::MigratorTrait;
 use std::sync::Arc;
 
+mod auth;
 mod config;
-mod db;
 mod entity;
 mod firebase;
 mod graphql;
 mod migration;
 
+use auth::Authenticated;
 use graphql::{AppSchema, MutationRoot, QueryRoot};
 
 #[get("/graphql?<query..>")]
-async fn graphql_query(schema: &State<AppSchema>, query: GraphQLQuery) -> GraphQLResponse {
+async fn graphql_query(
+    schema: &State<AppSchema>,
+    _auth: Authenticated,
+    query: GraphQLQuery,
+) -> GraphQLResponse {
     query.execute(schema.inner()).await
 }
 
 #[post("/graphql", data = "<request>", format = "application/json")]
-async fn graphql_request(schema: &State<AppSchema>, request: GraphQLRequest) -> GraphQLResponse {
+async fn graphql_request(
+    schema: &State<AppSchema>,
+    _auth: Authenticated,
+    request: GraphQLRequest,
+) -> GraphQLResponse {
     request.execute(schema.inner()).await
 }
 
@@ -43,7 +52,10 @@ async fn rocket() -> _ {
 
     let config = config::AppConfig::from_env().expect("Failed to load configuration");
 
-    let db = db::connect(&config.database_url)
+    let jwt_verifier =
+        auth::JwtVerifier::from_dir(&config.auth_keys_dir).expect("Failed to load auth public key");
+
+    let db = sea_orm::Database::connect(&config.database_url)
         .await
         .expect("Failed to connect to database");
 
@@ -67,5 +79,6 @@ async fn rocket() -> _ {
 
     rocket::build()
         .manage(schema)
+        .manage(jwt_verifier)
         .mount("/", routes![graphql_query, graphql_request, graphiql])
 }
