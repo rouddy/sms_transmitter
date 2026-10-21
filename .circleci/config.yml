@@ -1,0 +1,35 @@
+version: 2.1
+setup: true
+
+# Setup workflow: 변경된 파일을 보고 continue_config.yml 을 이어서 실행한다.
+# sms_transmitter_rocket/ (또는 CI 설정) 이 바뀌었을 때만 build-rocket=true 가 되어
+# Docker 이미지 빌드가 돌고, Android 만 바뀐 push 에서는 빌드를 건너뛴다.
+#
+# Project Settings > Advanced > "Enable dynamic config using setup workflows" 가 켜져 있어야 한다.
+
+orbs:
+  path-filtering: circleci/path-filtering@3.0.0
+
+workflows:
+  setup:
+    jobs:
+      - path-filtering/filter:
+          name: detect-rocket-changes
+          # main 에서 base-revision 을 main 으로 두면 직전 커밋 하나만 비교하므로,
+          # 여러 커밋을 한 번에 push(fast-forward) 하면 앞쪽 커밋의 변경을 놓친다.
+          # push 직전 SHA(pipeline.git.base_revision) 와 비교하고, 값이 없으면
+          # (수동 트리거 등) main 으로 fallback 해 직전 커밋과 비교한다.
+          pre-steps:
+            - run:
+                name: Resolve base revision
+                command: |
+                  BASE="<< pipeline.git.base_revision >>"
+                  echo "export FILTER_BASE_REVISION=${BASE:-main}" >> "${BASH_ENV}"
+          base-revision: ${FILTER_BASE_REVISION}
+          mapping: |
+            sms_transmitter_rocket/.* build-rocket true
+            \.circleci/.* build-rocket true
+          config-path: .circleci/continue_config.yml
+          filters:
+            branches:
+              only: main

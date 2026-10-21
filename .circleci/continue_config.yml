@@ -1,0 +1,144 @@
+version: 2.1
+
+# config.yml(setup workflow)이 sms_transmitter_rocket/ 변경을 감지했을 때만 이어서 실행된다.
+#
+# main 브랜치에 push될 때만 rouddy/sms_transmitter 이미지를 빌드해 Docker Hub에 push 한다.
+# 빌드 대상은 sms_transmitter_rocket/ 크레이트 (sms_transmitter_rocket/docker/build_and_push.sh 와 같은 이미지).
+# 태깅 규칙:
+#   - sms_transmitter_rocket/Cargo.toml 의 version 으로 태그
+#   - version 이 x.y.z 형식일 때만 latest 도 함께 태그
+# arm64 를 QEMU 로 에뮬레이션하면 Rust 빌드가 너무 느리므로 아키텍처별 네이티브
+# 머신에서 각각 빌드한 뒤 multi-arch manifest 로 합친다.
+#
+# 빌드 캐시: DLC(유료) 대신 BuildKit 캐시를 로컬 디렉터리로 export 해 CircleCI cache 에
+# 저장한다. 캐시 키는 Cargo.lock·Dockerfile 체크섬이라 의존성이 그대로면 cargo-chef 의
+# 의존성 레이어를 재사용하고 앱 크레이트만 다시 컴파일한다.
+#
+# 필요한 프로젝트 환경변수 (Project Settings > Environment Variables):
+#   DOCKERHUB_USERNAME, DOCKERHUB_PASSWORD (Docker Hub access token 권장)
+
+parameters:
+  build-rocket:
+    type: boolean
+    default: false
+
+executors:
+  amd64:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: large
+    environment:
+      IMAGE_NAME: rouddy/sms_transmitter
+      CRATE_DIR: sms_transmitter_rocket
+  arm64:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: arm.large
+    environment:
+      IMAGE_NAME: rouddy/sms_transmitter
+      CRATE_DIR: sms_transmitter_rocket
+  manifest:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: medium
+    environment:
+      IMAGE_NAME: rouddy/sms_transmitter
+      CRATE_DIR: sms_transmitter_rocket
+
+commands:
+  read_version:
+    steps:
+      - run:
+          name: Read version from Cargo.toml
+          command: |
+            VERSION="$(grep -m1 '^version' "${CRATE_DIR}/Cargo.toml" | sed 's/.*"\(.*\)".*/\1/')"
+            if [ -z "${VERSION}" ]; then
+              echo "ERROR: Could not extract version from ${CRATE_DIR}/Cargo.toml" >&2
+              exit 1
+            fi
+            echo "export VERSION=${VERSION}" >> "${BASH_ENV}"
+            echo "VERSION=${VERSION}"
+
+  docker_login:
+    steps:
+      - run:
+          name: Log in to Docker Hub
+          command: echo "${DOCKERHUB_PASSWORD}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+
+jobs:
+  build-image:
+    parameters:
+      arch:
+        type: enum
+        enum: [amd64, arm64]
+    executor: << parameters.arch >>
+    steps:
+      - checkout
+      - read_version
+      - docker_login
+      - restore_cache:
+          keys:
+            - buildx-v1-<< parameters.arch >>-{{ checksum "sms_transmitter_rocket/Cargo.lock" }}-{{ checksum "sms_transmitter_rocket/docker/Dockerfile" }}
+            - buildx-v1-<< parameters.arch >>-{{ checksum "sms_transmitter_rocket/Cargo.lock" }}-
+            - buildx-v1-<< parameters.arch >>-
+      - run:
+          name: Build and push linux/<< parameters.arch >> image
+          no_output_timeout: 60m
+          command: |
+            ARCH_IMAGE="${IMAGE_NAME}:${VERSION}-<< parameters.arch >>"
+            # local 캐시 export 는 기본 docker 드라이버에서 지원되지 않는다.
+            docker buildx create --name ci-builder --driver docker-container --use
+            # mode=max: 최종 runtime stage 뿐 아니라 builder stage 레이어까지 캐시한다.
+            docker buildx build \
+              --platform linux/<< parameters.arch >> \
+              --file "${CRATE_DIR}/docker/Dockerfile" \
+              --tag "${ARCH_IMAGE}" \
+              --cache-from type=local,src=/tmp/buildx-cache \
+              --cache-to type=local,dest=/tmp/buildx-cache-new,mode=max \
+              --push \
+              "${CRATE_DIR}"
+            # 덮어쓰지 않으면 이전 캐시가 계속 누적된다.
+            rm -rf /tmp/buildx-cache
+            mv /tmp/buildx-cache-new /tmp/buildx-cache
+      - save_cache:
+          key: buildx-v1-<< parameters.arch >>-{{ checksum "sms_transmitter_rocket/Cargo.lock" }}-{{ checksum "sms_transmitter_rocket/docker/Dockerfile" }}
+          paths:
+            - /tmp/buildx-cache
+
+  publish-manifest:
+    executor: manifest
+    steps:
+      - checkout
+      - read_version
+      - docker_login
+      - run:
+          name: Create multi-arch manifest
+          command: |
+            TAGS=(--tag "${IMAGE_NAME}:${VERSION}")
+            if [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              TAGS+=(--tag "${IMAGE_NAME}:latest")
+            else
+              echo "Non-semantic version (${VERSION}); skipping latest tag"
+            fi
+            docker buildx imagetools create "${TAGS[@]}" \
+              "${IMAGE_NAME}:${VERSION}-amd64" \
+              "${IMAGE_NAME}:${VERSION}-arm64"
+            docker buildx imagetools inspect "${IMAGE_NAME}:${VERSION}"
+
+workflows:
+  docker-image:
+    when: << pipeline.parameters.build-rocket >>
+    jobs:
+      - build-image:
+          name: build-image-<< matrix.arch >>
+          matrix:
+            parameters:
+              arch: [amd64, arm64]
+          filters: &main_only
+            branches:
+              only: main
+      - publish-manifest:
+          requires:
+            - build-image-amd64
+            - build-image-arm64
+          filters: *main_only
