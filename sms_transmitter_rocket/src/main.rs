@@ -37,7 +37,13 @@ async fn graphql_request(
 
 #[get("/graphiql")]
 fn graphiql() -> rocket::response::content::RawHtml<String> {
-    rocket::response::content::RawHtml(async_graphql::http::graphiql_source("/graphql", None))
+    // The builder's fetcher sends headers from the Headers tab, so a JWT from
+    // script/make_jwt.sh can be pasted there as `{"Authorization": "Bearer <JWT>"}`.
+    rocket::response::content::RawHtml(
+        async_graphql::http::GraphiQLSource::build()
+            .endpoint("/graphql")
+            .finish(),
+    )
 }
 
 #[launch]
