@@ -7,6 +7,7 @@ use rocket::State;
 use sea_orm_migration::MigratorTrait;
 use std::sync::Arc;
 
+mod admin;
 mod auth;
 mod config;
 mod entity;
@@ -87,4 +88,5 @@ async fn rocket() -> _ {
         .manage(schema)
         .manage(jwt_verifier)
         .mount("/", routes![graphql_query, graphql_request, graphiql])
+        .attach(admin::stage())
 }

@@ -1,0 +1,49 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}SMS 요청{% endblock title %}
+{% block content %}
+<div class="toolbar">
+  <h1>SMS 요청</h1>
+  <span class="spacer"></span>
+  <a class="button primary" href="/admin/sms-requests/new">SMS 보내기</a>
+</div>
+<form class="toolbar" method="get" action="/admin/sms-requests">
+  <select name="status">
+    <option value=""{% if status == "" %} selected{% endif %}>전체 ({{ all_count }})</option>
+    <option value="SENDING"{% if status == "SENDING" %} selected{% endif %}>전송 중 ({{ status_counts.SENDING }})</option>
+    <option value="SENT"{% if status == "SENT" %} selected{% endif %}>성공 ({{ status_counts.SENT }})</option>
+    <option value="FAILED"{% if status == "FAILED" %} selected{% endif %}>실패 ({{ status_counts.FAILED }})</option>
+  </select>
+  <input name="q" value="{{ q }}" placeholder="ID, 수신 번호, 메시지" size="30">
+  <button>조회</button>
+</form>
+{% if requests %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>요청 시각</th><th>수신 번호</th><th>메시지</th><th>상태</th><th>발신 번호</th><th>콜백</th></tr></thead>
+    <tbody>
+    {% for r in requests %}
+      <tr>
+        <td class="nowrap"><a href="/admin/sms-requests/{{ r.id }}">{{ m::datetime(value=r.createdAt) }}</a></td>
+        <td class="mono">{{ r.phoneNumber }}</td>
+        <td>
+          {{ r.message | truncate(length=40) }}
+          {% if r.error %}<div class="text-err">{{ r.error | truncate(length=80) }}</div>{% endif %}
+        </td>
+        <td>{{ m::status_badge(status=r.status) }}</td>
+        <td class="mono">{{ r.sender }}</td>
+        <td>{% if r.callbackUrl %}{{ m::callback_code(code=r.callbackResponseCode) }}{% else %}<span class="muted">-</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="pagination">
+  {% if page > 1 %}<a class="button" href="?status={{ status | urlencode_strict }}&amp;q={{ q | urlencode_strict }}&amp;page={{ page - 1 }}">이전</a>{% endif %}
+  <span class="muted">{{ page }} / {{ pages }} 페이지 · {{ total }}건</span>
+  {% if page < pages %}<a class="button" href="?status={{ status | urlencode_strict }}&amp;q={{ q | urlencode_strict }}&amp;page={{ page + 1 }}">다음</a>{% endif %}
+</div>
+{% else %}
+<p class="muted">조건에 맞는 요청이 없습니다.</p>
+{% endif %}
+{% endblock content %}

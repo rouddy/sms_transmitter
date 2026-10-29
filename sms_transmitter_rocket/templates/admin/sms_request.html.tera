@@ -1,0 +1,68 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}SMS 요청{% endblock title %}
+{% block content %}
+<div class="toolbar">
+  <h1>SMS 요청</h1>
+  {{ m::status_badge(status=request.status) }}
+  <span class="spacer"></span>
+  <a class="button" href="/admin/sms-requests">목록</a>
+</div>
+<section class="card">
+  <dl>
+    <dt>ID</dt><dd class="mono">{{ request.id }}</dd>
+    <dt>수신 번호</dt><dd class="mono">{{ request.phoneNumber }}</dd>
+    <dt>메시지</dt><dd><pre>{{ request.message }}</pre></dd>
+    <dt>발신 번호</dt>
+    <dd class="mono">
+      {% if sender %}{{ sender }}{% elif request.assignedPhoneNumberId %}<span class="muted">삭제된 번호 ({{ request.assignedPhoneNumberId }})</span>{% else %}-{% endif %}
+    </dd>
+    <dt>발신 기기</dt>
+    <dd>
+      {% if device %}<a href="/admin/devices#{{ request.assignedDeviceId }}">{{ device }}</a>{% elif request.assignedDeviceId %}<span class="muted">삭제된 기기</span>{% else %}-{% endif %}
+    </dd>
+    {% if request.error %}<dt>오류</dt><dd class="text-err">{{ request.error }}</dd>{% endif %}
+    <dt>요청 시각</dt><dd>{{ m::datetime(value=request.createdAt) }}</dd>
+    <dt>변경 시각</dt><dd>{{ m::datetime(value=request.updatedAt) }}</dd>
+  </dl>
+</section>
+
+<h2>콜백</h2>
+<section class="card">
+  {% if request.callbackUrl %}
+  <dl>
+    <dt>URL</dt><dd class="mono">{{ request.callbackUrl }}</dd>
+    <dt>응답 코드</dt><dd>{{ m::callback_code(code=request.callbackResponseCode) }}</dd>
+    {% if request.callbackResponseBody %}<dt>응답 본문</dt><dd><pre>{{ request.callbackResponseBody }}</pre></dd>{% endif %}
+  </dl>
+  {% else %}
+  <span class="muted">콜백 URL 없음</span>
+  {% endif %}
+</section>
+
+<h2>결과 보고</h2>
+<form method="post" action="/admin/sms-requests/{{ request.id }}/report" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <span class="hint">
+    {% if request.status == "SENDING" %}
+    기기 대신 발송 결과를 보고합니다. 상태가 바뀌고, 콜백 URL이 있으면 호출됩니다.
+    {% else %}
+    이미 결과가 보고된 요청입니다. 다시 보고해도 상태와 콜백은 그대로이고 발송 수만 반영됩니다.
+    {% endif %}
+  </span>
+  <div class="toolbar">
+    <label class="inline"><input type="radio" name="success" value="true" checked> 성공</label>
+    <label class="inline"><input type="radio" name="success" value="false"> 실패</label>
+  </div>
+  <label>오류 메시지
+    <span class="hint">실패로 보고할 때만 저장됩니다.</span>
+    <input name="error">
+  </label>
+  <span class="hint">발신 번호의 발송 수를 입력하면 오늘 날짜로 반영되며, 현재 값보다 작으면 무시됩니다. 둘 다 비워 두면 첫 성공 보고에서 1건 늘어납니다.</span>
+  <div class="grid2">
+    <label>오늘 발송 수 <input type="number" min="0" name="daily_sent_count"></label>
+    <label>이번 달 발송 수 <input type="number" min="0" name="monthly_sent_count"></label>
+  </div>
+  <button class="primary">보고</button>
+</form>
+{% endblock content %}

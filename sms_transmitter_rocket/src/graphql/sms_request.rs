@@ -15,7 +15,7 @@ use crate::firebase::FirebaseClient;
 use crate::graphql::phone_number::SentCountsInput;
 
 /// Only devices whose FCM token was seen within this window are picked as senders.
-const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
+pub(crate) const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
 
 const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
 

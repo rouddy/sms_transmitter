@@ -1,0 +1,7 @@
+{% extends "admin/base" %}
+{% block title %}오류{% endblock title %}
+{% block content %}
+<h1>오류</h1>
+<div class="flash error">{{ message }}</div>
+<a class="button" href="/admin">개요로</a>
+{% endblock content %}

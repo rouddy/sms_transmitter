@@ -1,0 +1,30 @@
+{% extends "admin/base" %}
+{% block title %}로그인{% endblock title %}
+{% block nav %}{% endblock nav %}
+{% block session %}{% endblock session %}
+{% block content %}
+<section class="card narrow">
+  <h1>SMS Transmitter 관리자</h1>
+  <p>API 호출에 쓰는 ES256 개인키(<code>private_key.pem</code>)로 로그인합니다.
+    서버는 키가 공개키와 짝이 맞는지만 확인하고 저장하지 않습니다.
+    로그인은 관리 페이지를 열어 두는 동안 유지되고, 모두 닫으면 몇 분 안에 끝납니다.</p>
+  <div id="insecure-warning" class="flash warning" hidden>
+    HTTPS가 아닌 연결입니다. 개인키가 암호화되지 않은 채 전송됩니다.
+  </div>
+  {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+  <form method="post" action="/admin/login" enctype="multipart/form-data">
+    <label>개인키 파일
+      <input type="file" name="key_file" accept=".pem,.key,.txt">
+    </label>
+    <label>또는 PEM 붙여넣기
+      <textarea name="key_text" rows="6" class="mono" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+    </label>
+    <button class="primary">로그인</button>
+  </form>
+</section>
+<script>
+  if (location.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) {
+    document.getElementById('insecure-warning').hidden = false;
+  }
+</script>
+{% endblock content %}

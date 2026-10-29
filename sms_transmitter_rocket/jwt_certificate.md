@@ -15,7 +15,7 @@ For every request, the caller signs a short-lived JWT with the private key and s
 ### Why this approach
 
 - This is self-hosted open source: each operator creates their own keys and builds the APK, with no app store distribution. So a single trust boundary, where the operator hands out the key only to callers they trust, is sufficient.
-- There are no sessions or server-stored tokens. The only server state is the public key file.
+- API calls use no sessions or server-stored tokens. The only server state is the public key file. (The admin web page keeps short-lived in-memory sessions; see 4.3.)
 - Since the server holds only the public key, a leaked server configuration or image cannot be used to impersonate a caller.
 - Wherever TLS is terminated (nginx, Traefik, Cloudflare, etc.), it works as long as the header is forwarded.
 
@@ -143,6 +143,17 @@ sequenceDiagram
 ```
 
 Because a new JWT is created and attached to every request, there is no need to manage token expiry or renewal separately.
+
+### 4.3 Admin web login (`/admin`)
+
+Browsers cannot attach a fresh JWT to every page navigation, so the admin page logs in once with the same private key:
+
+1. The operator uploads `private_key.pem` on `/admin/login`.
+2. The server signs a test JWT with it and verifies that token exactly as in 4.1 (`JwtVerifier::accepts_private_key`). The key is then discarded, never stored.
+3. On success the server starts an in-memory session and sets an `admin_session` cookie (HttpOnly, SameSite=Strict, path `/admin`, no expiry).
+4. Open admin pages send a heartbeat every 60 seconds. The session expires after 5 minutes without requests, so it ends shortly after every admin page is closed. Logging out or restarting the server also ends it.
+
+Unlike API calls, the private key itself crosses the network once at login. Serve `/admin` over HTTPS when it is reachable from other machines.
 
 ## 5. Key rotation
 

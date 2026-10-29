@@ -71,6 +71,18 @@ curl -H "Authorization: Bearer $(./script/make_jwt.sh)" \
 
 A token stops working about 6 minutes after it is issued (300 s lifetime + 60 s clock skew). When queries start failing with `401`, generate a new token and replace it in the Headers tab.
 
+### Admin web
+
+`/admin` is a server-rendered admin UI (Rocket + Tera) covering every GraphQL query and mutation: quota overview and recent requests, registering/editing/deleting devices and their phone numbers, sending SMS, browsing and searching requests, and reporting a result manually.
+
+1. Open `http://<host>:54323/admin`.
+2. Upload `private_key.pem` (or paste its contents). The server signs a test token with it and checks it against `public_key.pem` (or `public_key.previous.pem`), then discards the key and issues a session cookie.
+3. The session lasts while any admin page is open. Open pages send a heartbeat every minute, and the session expires 5 minutes after the last one stops, i.e. after closing every admin tab or the browser. Sessions are kept in memory, so restarting the server logs everyone out.
+
+The private key travels to the server once at login, so serve `/admin` over HTTPS when it is reachable from other machines (the login page warns on plain HTTP).
+
+Templates live in `templates/admin/` and are read at runtime from `templates/` under the working directory (`ROCKET_TEMPLATE_DIR` overrides it). The Docker image copies them to `/app/templates`.
+
 ### Key rotation
 
 ```bash

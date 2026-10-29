@@ -1,0 +1,40 @@
+{% macro status_badge(status) %}
+{%- if status == "SENT" -%}
+<span class="badge ok">성공</span>
+{%- elif status == "FAILED" -%}
+<span class="badge err">실패</span>
+{%- else -%}
+<span class="badge warn">전송 중</span>
+{%- endif -%}
+{% endmacro status_badge %}
+
+{% macro datetime(value) %}{{ value | truncate(length=19, end="") }}{% endmacro datetime %}
+
+{# A limit of 0 means unlimited, in which case `remaining` is null. #}
+{% macro quota(sent, limit, remaining) %}
+{%- if limit == 0 -%}
+{{ sent }} <span class="muted">/ 무제한</span>
+{%- else -%}
+{{ sent }} / {{ limit }} <span class="muted">(남음 {{ remaining }})</span>
+{%- endif -%}
+{% endmacro quota %}
+
+{% macro callback_code(code) %}
+{%- if code is number -%}
+<span class="badge {% if code >= 200 and code < 300 %}ok{% else %}err{% endif %}">{% if code == -1 %}연결 실패{% else %}{{ code }}{% endif %}</span>
+{%- else -%}
+<span class="muted">대기</span>
+{%- endif -%}
+{% endmacro callback_code %}
+
+{# Row of the device form's phone number table. `index` is "__index__" in the JS row template. #}
+{% macro phone_row(index, row) %}
+<tr>
+  <td><input name="phone_numbers[{{ index }}].phone_number" value="{{ row.phoneNumber }}" placeholder="01012345678" required></td>
+  <td><input type="number" min="0" name="phone_numbers[{{ index }}].daily_limit" value="{{ row.dailyLimit }}" required></td>
+  <td><input type="number" min="0" name="phone_numbers[{{ index }}].monthly_limit" value="{{ row.monthlyLimit }}" required></td>
+  <td><input type="number" min="0" name="phone_numbers[{{ index }}].daily_sent_count" value="{{ row.dailySentCount }}"{% if row.currentDaily is defined %} placeholder="현재 {{ row.currentDaily }}"{% endif %}></td>
+  <td><input type="number" min="0" name="phone_numbers[{{ index }}].monthly_sent_count" value="{{ row.monthlySentCount }}"{% if row.currentMonthly is defined %} placeholder="현재 {{ row.currentMonthly }}"{% endif %}></td>
+  <td><button type="button" class="remove-row danger">삭제</button></td>
+</tr>
+{% endmacro phone_row %}

@@ -1,0 +1,54 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}기기{% endblock title %}
+{% block content %}
+<div class="toolbar">
+  <h1>기기</h1>
+  <span class="spacer"></span>
+  <a class="button primary" href="/admin/devices/new">기기 등록</a>
+</div>
+{% if devices %}
+{% for device in devices %}
+<section class="card" id="{{ device.id }}">
+  <div class="toolbar">
+    <h2>{{ device.deviceInfo }}</h2>
+    {% if device.active %}<span class="badge ok">활성</span>{% else %}<span class="badge off">비활성 · 90일 넘게 접속 없음</span>{% endif %}
+    <span class="spacer"></span>
+    <a class="button" href="/admin/devices/{{ device.id }}/edit">수정</a>
+    <form class="inline" method="post" action="/admin/devices/{{ device.id }}/delete"
+          onsubmit="return confirm('이 기기와 등록된 번호를 모두 삭제할까요?');">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button class="danger">삭제</button>
+    </form>
+  </div>
+  <dl>
+    <dt>ID</dt><dd class="mono">{{ device.id }}</dd>
+    <dt>FCM 토큰</dt><dd class="mono">{{ device.token }}</dd>
+    <dt>마지막 접속</dt><dd>{{ m::datetime(value=device.lastAccessTime) }}</dd>
+    <dt>등록 / 수정</dt><dd>{{ m::datetime(value=device.createdAt) }} / {{ m::datetime(value=device.updatedAt) }}</dd>
+  </dl>
+  {% if device.phoneNumbers %}
+  <div class="table-wrap" style="margin-top: 12px">
+    <table>
+      <thead><tr><th>번호</th><th>오늘 발송</th><th>이번 달 발송</th><th>일·월 집계 기준일</th></tr></thead>
+      <tbody>
+      {% for pn in device.phoneNumbers %}
+        <tr>
+          <td class="mono">{{ pn.phoneNumber }}</td>
+          <td class="nowrap">{{ m::quota(sent=pn.dailySentCount, limit=pn.dailyLimit, remaining=pn.dailyRemaining) }}</td>
+          <td class="nowrap">{{ m::quota(sent=pn.monthlySentCount, limit=pn.monthlyLimit, remaining=pn.monthlyRemaining) }}</td>
+          <td class="muted">{{ pn.lastDailyReset }} · {{ pn.lastMonthlyReset }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">등록된 번호가 없습니다.</p>
+  {% endif %}
+</section>
+{% endfor %}
+{% else %}
+<p class="muted">등록된 기기가 없습니다. Android 앱이 서버에 연결되면 자동으로 등록됩니다.</p>
+{% endif %}
+{% endblock content %}

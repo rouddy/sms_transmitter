@@ -1,0 +1,53 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}{% if existing %}기기 수정{% else %}기기 등록{% endif %}{% endblock title %}
+{% block content %}
+<h1>{% if existing %}기기 수정 · {{ existing.deviceInfo }}{% else %}기기 등록{% endif %}</h1>
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+<form method="post" action="/admin/devices" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>FCM 토큰
+    <span class="hint">기기는 토큰으로 구분합니다. 이미 등록된 토큰이면 그 기기를 수정합니다.</span>
+    <input name="token" value="{{ token }}" class="mono" required{% if existing %} readonly{% endif %}>
+  </label>
+  <label>기기 정보
+    <input name="device_info" value="{{ device_info }}">
+  </label>
+
+  <h2>발신 번호</h2>
+  <span class="hint">
+    한도 0은 무제한입니다. 목록에서 뺀 번호는 삭제되고, 다른 기기에 있던 번호를 넣으면 이 기기로 옮겨집니다.<br>
+    발송 수는 비워 두면 그대로이고, 입력하면 기기가 보고한 것처럼 오늘 날짜로 반영됩니다. 현재 값보다 작으면 무시됩니다.
+  </span>
+  <div class="table-wrap">
+    <table id="phone-rows">
+      <thead><tr><th>번호</th><th>일 한도</th><th>월 한도</th><th>오늘 발송 수</th><th>이번 달 발송 수</th><th></th></tr></thead>
+      <tbody>
+      {% for row in rows %}{{ m::phone_row(index=loop.index0, row=row) }}{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <template id="phone-row-template">{{ m::phone_row(index="__index__", row=empty_row) }}</template>
+
+  <div class="toolbar" style="margin-top: 12px">
+    <button type="button" id="add-row">번호 추가</button>
+    <span class="spacer"></span>
+    <a class="button" href="/admin/devices">취소</a>
+    <button class="primary">저장</button>
+  </div>
+  <span class="hint">저장하면 기기의 마지막 접속 시각이 지금으로 바뀌어 발신 후보가 됩니다.</span>
+</form>
+<script>
+  (() => {
+    const rows = document.querySelector('#phone-rows tbody');
+    const template = document.getElementById('phone-row-template').innerHTML;
+    let next = {{ rows | length }};
+    document.getElementById('add-row').addEventListener('click', () => {
+      rows.insertAdjacentHTML('beforeend', template.replaceAll('__index__', next++));
+    });
+    rows.addEventListener('click', (event) => {
+      if (event.target.matches('.remove-row')) event.target.closest('tr').remove();
+    });
+  })();
+</script>
+{% endblock content %}
