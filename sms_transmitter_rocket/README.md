@@ -73,7 +73,7 @@ A token stops working about 6 minutes after it is issued (300 s lifetime + 60 s 
 
 ### Admin web
 
-`/admin` is a server-rendered admin UI (Rocket + Tera) covering every GraphQL query and mutation: quota overview and recent requests, registering/editing/deleting devices and their phone numbers, sending SMS, browsing and searching requests, and reporting a result manually.
+`/admin` is a server-rendered admin UI (Rocket + Tera) covering every GraphQL query and mutation: quota overview and recent requests, registering/editing/deleting devices and their phone numbers, sending SMS, browsing and searching requests, deleting requests (checked rows on the list page, or one from its detail page), and reporting a result manually.
 
 1. Open `http://<host>:54323/admin`.
 2. Upload `private_key.pem` (or paste its contents). The server signs a test token with it and checks it against `public_key.pem` (or `public_key.previous.pem`), then discards the key and issues a session cookie.
@@ -316,6 +316,16 @@ query {
   }
 }
 ```
+
+Delete SMS requests (returns the number of deleted records):
+
+```graphql
+mutation {
+  deleteSmsRequests(ids: ["<UUID>", "<UUID>"])
+}
+```
+
+Unknown IDs are ignored, and an invalid ID fails the whole call without deleting anything. A request still in `Sending` can be deleted too; the device's later `reportSmsResult` for it then fails with `SMS request not found`, and its sent counts catch up on the device's next report or registration.
 
 ## Environment Variables
 

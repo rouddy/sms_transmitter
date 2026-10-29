@@ -51,6 +51,7 @@
     td input:not([type=radio]) { min-width: 90px; }
     button, .button { font: inherit; padding: 5px 12px; border: 1px solid var(--border); border-radius: 6px; background: #fff; color: var(--fg); cursor: pointer; text-decoration: none; display: inline-block; }
     .primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button:disabled { opacity: 0.5; cursor: default; }
     .danger { color: var(--err); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
     dl { display: grid; grid-template-columns: 140px 1fr; gap: 6px 16px; margin: 0; }

@@ -7,6 +7,12 @@
   {{ m::status_badge(status=request.status) }}
   <span class="spacer"></span>
   <a class="button" href="/admin/sms-requests">목록</a>
+  <form class="inline" method="post" action="/admin/sms-requests/delete"
+        onsubmit="return confirm('{% if request.status == "SENDING" %}전송 중인 요청입니다. 삭제하면 기기의 결과 보고가 실패합니다.\n{% endif %}이 요청을 삭제할까요?');">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="ids" value="{{ request.id }}">
+    <button class="danger">삭제</button>
+  </form>
 </div>
 <section class="card">
   <dl>

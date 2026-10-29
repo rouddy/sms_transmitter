@@ -51,6 +51,7 @@ pub fn stage() -> AdHoc {
                     sms_requests::create,
                     sms_requests::detail,
                     sms_requests::report,
+                    sms_requests::delete,
                 ],
             )
             .register("/admin", catchers![unauthorized])

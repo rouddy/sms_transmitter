@@ -1,5 +1,5 @@
-//! SMS requests: list (`smsRequests`), detail (`smsRequest`), send (`requestSms`) and manual
-//! result reports (`reportSmsResult`).
+//! SMS requests: list (`smsRequests`), detail (`smsRequest`), send (`requestSms`), manual
+//! result reports (`reportSmsResult`) and deletion (`deleteSmsRequests`).
 
 use rocket::form::Form;
 use rocket::request::FlashMessage;
@@ -42,6 +42,8 @@ const REQUEST_MUTATION: &str =
 const REPORT_MUTATION: &str =
     "mutation($input: ReportSmsResultInput!) { reportSmsResult(input: $input) }";
 
+const DELETE_MUTATION: &str = "mutation($ids: [ID!]!) { deleteSmsRequests(ids: $ids) }";
+
 #[derive(FromForm)]
 pub(super) struct SmsForm {
     csrf: String,
@@ -57,6 +59,16 @@ pub(super) struct ReportForm {
     error: String,
     daily_sent_count: Option<i32>,
     monthly_sent_count: Option<i32>,
+}
+
+#[derive(FromForm)]
+pub(super) struct DeleteForm {
+    csrf: String,
+    ids: Vec<String>,
+    // The list view to return to.
+    status: Option<String>,
+    q: Option<String>,
+    page: Option<usize>,
 }
 
 #[get("/sms-requests?<status>&<q>&<page>")]
@@ -213,6 +225,32 @@ pub(super) async fn report(
         Ok(_) => Flash::success(redirect, "결과를 보고했습니다."),
         Err(error) => Flash::error(redirect, error),
     })
+}
+
+/// Deletes the checked requests of the list page, or the one shown on the detail page.
+#[post("/sms-requests/delete", data = "<form>")]
+pub(super) async fn delete(
+    session: AdminSession,
+    schema: &State<AppSchema>,
+    form: Form<DeleteForm>,
+) -> Result<Flash<Redirect>, PageError> {
+    session.check_csrf(&form.csrf)?;
+    let status = form.status.as_deref().filter(|status| !status.is_empty());
+    let q = form.q.as_deref().filter(|q| !q.is_empty());
+    let redirect = Redirect::to(uri!("/admin", list(status, q, form.page)));
+    if form.ids.is_empty() {
+        return Ok(Flash::error(redirect, "삭제할 요청을 선택하세요."));
+    }
+
+    Ok(
+        match execute(schema, DELETE_MUTATION, json!({ "ids": form.ids })).await {
+            Ok(data) => Flash::success(
+                redirect,
+                format!("요청 {}건을 삭제했습니다.", data["deleteSmsRequests"]),
+            ),
+            Err(error) => Flash::error(redirect, error),
+        },
+    )
 }
 
 fn new_form_page(session: &AdminSession, values: Value, error: Option<String>) -> Template {

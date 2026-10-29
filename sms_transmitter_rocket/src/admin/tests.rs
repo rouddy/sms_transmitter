@@ -272,9 +272,8 @@ async fn failed_sms_request_keeps_form_values() {
     assert!(page.contains("hello admin"));
 }
 
-#[rocket::async_test]
-async fn report_form_finalizes_request() {
-    let (client, schema, db) = setup().await;
+/// Registers a device with one sender number (01012345678) and returns that number.
+async fn register_sender(schema: &AppSchema, db: &DatabaseConnection) -> phone_number::Model {
     let response = schema
         .execute(
             r#"mutation { registerFcmToken(input: { token: "token-a", deviceInfo: "phone",
@@ -282,12 +281,16 @@ async fn report_form_finalizes_request() {
         )
         .await;
     assert!(response.errors.is_empty(), "{:?}", response.errors);
-    let sender = phone_number::Entity::find()
+    phone_number::Entity::find()
         .filter(phone_number::Column::PhoneNumber.eq("01012345678"))
-        .one(&db)
+        .one(db)
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+}
+
+/// Inserts a `Sending` request assigned to `sender`, as `requestSms` would.
+async fn insert_request(db: &DatabaseConnection, sender: &phone_number::Model) -> Uuid {
     let now = Local::now().naive_local();
     let request_id = Uuid::new_v4();
     sms_request::ActiveModel {
@@ -304,9 +307,27 @@ async fn report_form_finalizes_request() {
         created_at: Set(now),
         updated_at: Set(now),
     }
-    .insert(&db)
+    .insert(db)
     .await
     .unwrap();
+    request_id
+}
+
+async fn remaining_request_ids(db: &DatabaseConnection) -> Vec<Uuid> {
+    sms_request::Entity::find()
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|request| request.id)
+        .collect()
+}
+
+#[rocket::async_test]
+async fn report_form_finalizes_request() {
+    let (client, schema, db) = setup().await;
+    let sender = register_sender(&schema, &db).await;
+    let request_id = insert_request(&db, &sender).await;
 
     login(&client, test_keys::PRIVATE_KEY).await;
     let csrf = csrf_token(&client).await;
@@ -339,6 +360,81 @@ async fn report_form_finalizes_request() {
     assert!(body(&client, "/admin/sms-requests?status=FAILED")
         .await
         .contains(&request_id.to_string()));
+}
+
+#[rocket::async_test]
+async fn list_deletes_checked_requests_and_returns_to_same_view() {
+    let (client, schema, db) = setup().await;
+    let sender = register_sender(&schema, &db).await;
+    let first = insert_request(&db, &sender).await.to_string();
+    let second = insert_request(&db, &sender).await.to_string();
+    let kept = insert_request(&db, &sender).await;
+
+    login(&client, test_keys::PRIVATE_KEY).await;
+    let list = body(&client, "/admin/sms-requests").await;
+    assert!(list.contains(&format!("name=\"ids\" value=\"{first}\"")));
+    let csrf = csrf_token(&client).await;
+
+    let response = post_form(
+        &client,
+        "/admin/sms-requests/delete",
+        &[
+            ("csrf", &csrf),
+            ("ids", &first),
+            ("ids", &second),
+            ("status", "SENDING"),
+            ("q", "01 0"),
+            ("page", "2"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        location(&response),
+        Some("/admin/sms-requests?status=SENDING&q=01%200&page=2")
+    );
+    assert_eq!(remaining_request_ids(&db).await, vec![kept]);
+    assert!(body(&client, "/admin/sms-requests")
+        .await
+        .contains("요청 2건을 삭제했습니다."));
+
+    // Nothing checked: no mutation, back to the unfiltered list.
+    let response = post_form(
+        &client,
+        "/admin/sms-requests/delete",
+        &[("csrf", &csrf), ("status", ""), ("q", ""), ("page", "1")],
+    )
+    .await;
+    assert_eq!(location(&response), Some("/admin/sms-requests?page=1"));
+    assert_eq!(remaining_request_ids(&db).await, vec![kept]);
+}
+
+#[rocket::async_test]
+async fn detail_page_deletes_its_request() {
+    let (client, schema, db) = setup().await;
+    let sender = register_sender(&schema, &db).await;
+    let request_id = insert_request(&db, &sender).await.to_string();
+
+    login(&client, test_keys::PRIVATE_KEY).await;
+    let detail = body(&client, &format!("/admin/sms-requests/{request_id}")).await;
+    assert!(detail.contains("/admin/sms-requests/delete"));
+    let csrf = csrf_token(&client).await;
+
+    let response = post_form(
+        &client,
+        "/admin/sms-requests/delete",
+        &[("csrf", &csrf), ("ids", &request_id)],
+    )
+    .await;
+    assert_eq!(location(&response), Some("/admin/sms-requests"));
+    assert!(remaining_request_ids(&db).await.is_empty());
+
+    let response = post_form(
+        &client,
+        "/admin/sms-requests/delete",
+        &[("csrf", "wrong"), ("ids", &request_id)],
+    )
+    .await;
+    assert_eq!(response.status(), Status::Forbidden);
 }
 
 #[rocket::async_test]
