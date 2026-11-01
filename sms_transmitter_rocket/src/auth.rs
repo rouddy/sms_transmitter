@@ -7,10 +7,12 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{
+    decode, decode_header, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
+};
 use rocket::http::Status;
 use rocket::request::{FromRequest, Outcome, Request};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 pub const PUBLIC_KEY_FILE: &str = "public_key.pem";
@@ -29,7 +31,7 @@ pub struct JwtVerifier {
     validation: Validation,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Claims {
     iat: i64,
     exp: i64,
@@ -64,12 +66,33 @@ impl JwtVerifier {
             );
         }
 
+        Ok(Self::with_keys(keys))
+    }
+
+    fn with_keys(keys: Vec<DecodingKey>) -> Self {
         let mut validation = Validation::new(Algorithm::ES256);
         validation.leeway = CLOCK_SKEW_LEEWAY_SECS as u64;
         validation.validate_aud = false;
         validation.set_required_spec_claims(&["exp", "iat"]);
 
-        Ok(Self { keys, validation })
+        Self { keys, validation }
+    }
+
+    #[cfg(test)]
+    pub fn from_public_pem(pem: &str) -> Self {
+        Self::with_keys(vec![DecodingKey::from_ec_pem(pem.as_bytes()).unwrap()])
+    }
+
+    /// Checks that `pem` is a private key whose tokens `verify` accepts, by signing one the
+    /// same way API callers do. Used by the admin login, which never stores the key.
+    pub fn accepts_private_key(&self, pem: &[u8]) -> std::result::Result<(), String> {
+        let key =
+            EncodingKey::from_ec_pem(pem).map_err(|e| format!("invalid EC private key: {e}"))?;
+        let iat = Utc::now().timestamp();
+        let claims = Claims { iat, exp: iat + 60 };
+        let token = encode(&Header::new(Algorithm::ES256), &claims, &key)
+            .map_err(|e| format!("failed to sign test token: {e}"))?;
+        self.verify(&token)
     }
 
     pub fn verify(&self, token: &str) -> std::result::Result<(), String> {
@@ -132,9 +155,46 @@ impl<'r> FromRequest<'r> for Authenticated {
     }
 }
 
+/// Throwaway P-256 key pairs used only by tests.
+#[cfg(test)]
+pub mod test_keys {
+    pub const PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgBxwVOdzoqJSkEkAQ
++yt1G+5ajmGojPgw9kUKiATDR2ahRANCAASnXNzcxXXKIwuOJExCyWv0fBKhFfzT
+sSM+mcA30NWyI8hgLq0sI7x7Aik6q38qTyMxJdQ6669fvSC94UGWMD6l
+-----END PRIVATE KEY-----
+";
+    pub const PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEp1zc3MV1yiMLjiRMQslr9HwSoRX8
+07EjPpnAN9DVsiPIYC6tLCO8ewIpOqt/Kk8jMSXUOuuvX70gveFBljA+pQ==
+-----END PUBLIC KEY-----
+";
+    /// Not paired with `PUBLIC_KEY`.
+    pub const OTHER_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgEc3HkDp+yvgjRX5K
+TGsw3KqmoYDlZNNvplwE7+VjYSyhRANCAATHZzYiQqDOoo8qSK1X8s+YB1lPTkEx
+JHe32gaHHZRc3aHz2IJ32viVJTzl9/tjvO961bgMe4n5oWq9hIiMNegu
+-----END PRIVATE KEY-----
+";
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn accepts_only_the_paired_private_key() {
+        let verifier = JwtVerifier::from_public_pem(test_keys::PUBLIC_KEY);
+        assert!(verifier
+            .accepts_private_key(test_keys::PRIVATE_KEY.as_bytes())
+            .is_ok());
+        assert!(verifier
+            .accepts_private_key(test_keys::OTHER_PRIVATE_KEY.as_bytes())
+            .is_err());
+        assert!(verifier
+            .accepts_private_key(test_keys::PUBLIC_KEY.as_bytes())
+            .is_err());
+    }
 
     #[test]
     fn accepts_token_within_lifetime() {

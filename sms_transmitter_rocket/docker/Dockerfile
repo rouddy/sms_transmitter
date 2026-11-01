@@ -44,6 +44,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY --from=builder /app/target/release/sms_transmitter_rocket /app/sms_transmitter_rocket
+# Admin page templates are loaded at runtime from ./templates (relative to WORKDIR).
+COPY templates /app/templates
 
 # Auth key pair is never baked into the image; mount the directory created by
 # script/generate_keys.sh here (only public_key.pem is required on the server).

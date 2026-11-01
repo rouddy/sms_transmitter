@@ -15,9 +15,11 @@ use crate::firebase::FirebaseClient;
 use crate::graphql::phone_number::SentCountsInput;
 
 /// Only devices whose FCM token was seen within this window are picked as senders.
-const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
+pub(crate) const ACTIVE_TOKEN_WINDOW: chrono::Duration = chrono::Duration::days(90);
 
 const CALLBACK_RESPONSE_BODY_MAX_BYTES: usize = 16 * 1024;
+
+const DELETE_BATCH_SIZE: usize = 500;
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
 pub enum SmsStatus {
@@ -336,6 +338,35 @@ impl SmsRequestMutation {
         }
 
         Ok(true)
+    }
+
+    /// Deletes the SMS requests with the given IDs and returns how many were deleted.
+    /// Unknown IDs are ignored; an invalid ID fails the whole call before anything is deleted.
+    /// A request still `Sending` can be deleted too: its result report then fails with "SMS
+    /// request not found", and the device's next report or registration syncs its counts.
+    pub async fn delete_sms_requests(&self, ctx: &Context<'_>, ids: Vec<ID>) -> Result<u64> {
+        let db = ctx.data::<DatabaseConnection>()?;
+        let ids = ids
+            .iter()
+            .map(|id| {
+                Uuid::parse_str(id).map_err(|_| {
+                    async_graphql::Error::new(format!("Invalid request ID: {}", id.as_str()))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let txn = db.begin().await?;
+        let mut deleted = 0;
+        // Batches keep each statement well under SQLite's bound-parameter limit.
+        for batch in ids.chunks(DELETE_BATCH_SIZE) {
+            deleted += sms_request::Entity::delete_many()
+                .filter(sms_request::Column::Id.is_in(batch.iter().copied()))
+                .exec(&txn)
+                .await?
+                .rows_affected;
+        }
+        txn.commit().await?;
+        Ok(deleted)
     }
 }
 

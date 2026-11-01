@@ -42,7 +42,7 @@ Authorization: Bearer <JWT>
 - Header: `{"alg":"ES256","typ":"JWT"}`
 - Claims: `iat`, `exp` (required, `exp - iat <= 300` seconds), `jti` (optional, recommended)
 - 60 seconds of clock skew are tolerated.
-- Missing or invalid tokens get `401 Unauthorized`. `/graphiql` itself is not protected, but its requests need the header (set it in the GraphiQL *Headers* tab).
+- Missing or invalid tokens get `401 Unauthorized`. `/graphiql` itself is not protected, but its requests need the header (see [GraphiQL](#graphiql)).
 
 Anyone holding `private_key.pem` can call every API, so share it only with trusted callers.
 The Android app embeds it at build time (see `sms_transmitter_Android/README.md`).
@@ -55,6 +55,33 @@ curl -H "Authorization: Bearer $(./script/make_jwt.sh)" \
      -d '{"query":"{ phoneNumbers { phoneNumber } }"}' \
      http://localhost:54323/graphql
 ```
+
+### GraphiQL
+
+`/graphiql` loads without a token, but every query it sends to `/graphql` needs one:
+
+1. Run `./script/make_jwt.sh` and copy the printed token.
+2. Open the **Headers** tab below the query editor and enter:
+
+```json
+{ "Authorization": "Bearer <JWT>" }
+```
+
+3. Click **Re-fetch GraphQL schema** (refresh icon in the left sidebar) so the docs and autocomplete load with the token.
+
+A token stops working about 6 minutes after it is issued (300 s lifetime + 60 s clock skew). When queries start failing with `401`, generate a new token and replace it in the Headers tab.
+
+### Admin web
+
+`/admin` is a server-rendered admin UI (Rocket + Tera) covering every GraphQL query and mutation: quota overview and recent requests, registering/editing/deleting devices and their phone numbers, sending SMS, browsing and searching requests, deleting requests (checked rows on the list page, or one from its detail page), and reporting a result manually.
+
+1. Open `http://<host>:54323/admin`.
+2. Upload `private_key.pem` (or paste its contents). The server signs a test token with it and checks it against `public_key.pem` (or `public_key.previous.pem`), then discards the key and issues a session cookie.
+3. The session lasts while any admin page is open. Open pages send a heartbeat every minute, and the session expires 5 minutes after the last one stops, i.e. after closing every admin tab or the browser. Sessions are kept in memory, so restarting the server logs everyone out.
+
+The private key travels to the server once at login, so serve `/admin` over HTTPS when it is reachable from other machines (the login page warns on plain HTTP).
+
+Templates live in `templates/admin/` and are read at runtime from `templates/` under the working directory (`ROCKET_TEMPLATE_DIR` overrides it). The Docker image copies them to `/app/templates`.
 
 ### Key rotation
 
@@ -95,7 +122,7 @@ For Kubernetes, see `k8s/README.md`.
 
 ## GraphQL API
 
-Navigate to `http://localhost:54323/graphiql` for the interactive explorer (add the `Authorization` header described above).
+Navigate to `http://localhost:54323/graphiql` for the interactive explorer (set the `Authorization` header as described in [GraphiQL](#graphiql)).
 
 ### FCM Token
 
@@ -290,6 +317,16 @@ query {
 }
 ```
 
+Delete SMS requests (returns the number of deleted records):
+
+```graphql
+mutation {
+  deleteSmsRequests(ids: ["<UUID>", "<UUID>"])
+}
+```
+
+Unknown IDs are ignored, and an invalid ID fails the whole call without deleting anything. A request still in `Sending` can be deleted too; the device's later `reportSmsResult` for it then fails with `SMS request not found`, and its sent counts catch up on the device's next report or registration.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -309,30 +346,30 @@ query {
 
 ### Test SMS Script (`script/test_sens_sms.sh`)
 
-`requestSms` (`request_sms`) GraphQL mutation을 호출하여 SMS 발송을 테스트하는 쉘 스크립트입니다.
+A shell script that tests SMS sending by calling the `requestSms` (`request_sms`) GraphQL mutation.
 
 ```bash
-# 기본 사용법 (기본 Base URL: http://localhost:54323, 기본 메시지: "문자 받으면 연락주세요")
+# Basic usage (default base URL: http://localhost:54323, default message: "문자 받으면 연락주세요")
 ./script/test_sens_sms.sh --phone 01012345678
 
-# 메시지 및 Base URL 직접 지정
-./script/test_sens_sms.sh http://localhost:54323 --phone 01012345678 --msg "인증번호: 123456"
+# Specify the message and base URL
+./script/test_sens_sms.sh http://localhost:54323 --phone 01012345678 --msg "Verification code: 123456"
 
-# Callback URL 포함
+# Include a callback URL
 ./script/test_sens_sms.sh --phone 01012345678 --callback "https://example.com/callback"
 
-# 도움말 확인
+# Show help
 ./script/test_sens_sms.sh --help
 ```
 
 #### Parameters & Options
 
-| 인자 / 옵션 | 필수 여부 | 기본값 | 설명 |
+| Argument / Option | Required | Default | Description |
 |---|---|---|---|
-| `[BASE_URL]` / `--base-url`, `-b` | 선택 | `http://localhost:54323` | GraphQL 서버 Base URL (기본 위치 인자 또는 플래그로 지정 가능) |
-| `--phone`, `-p` | **필수** | - | 수신자 전화번호 (누락 시 에러 발생) |
-| `--msg`, `-m` | 선택 | `"문자 받으면 연락주세요"` | 전송할 SMS 메시지 내용 |
-| `--callback`, `-c` | 선택 | - | SMS 발송 결과 리포트 수신용 Callback URL |
-| `--dry-run` | 선택 | - | 실제 요청을 전송하지 않고 엔드포인트와 페이로드 JSON만 출력 |
-| `--help`, `-h` | 선택 | - | 사용법 안내 출력 |
+| `[BASE_URL]` / `--base-url`, `-b` | No | `http://localhost:54323` | GraphQL server base URL (positional argument or flag) |
+| `--phone`, `-p` | **Yes** | - | Recipient phone number (error if missing) |
+| `--msg`, `-m` | No | `"문자 받으면 연락주세요"` ("Please contact me when you get this text") | SMS message body to send |
+| `--callback`, `-c` | No | - | Callback URL that receives the SMS send result |
+| `--dry-run` | No | - | Print the endpoint and payload JSON without sending the request |
+| `--help`, `-h` | No | - | Print usage |
 

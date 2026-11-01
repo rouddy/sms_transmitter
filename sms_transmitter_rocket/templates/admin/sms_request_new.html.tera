@@ -1,0 +1,24 @@
+{% extends "admin/base" %}
+{% block title %}SMS 보내기{% endblock title %}
+{% block content %}
+<h1>SMS 보내기</h1>
+{% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+<form method="post" action="/admin/sms-requests" class="card">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>수신 번호
+    <input name="phone_number" value="{{ values.phoneNumber }}" placeholder="01012345678" required>
+  </label>
+  <label>메시지
+    <textarea name="message" rows="6" required>{{ values.message }}</textarea>
+  </label>
+  <label>콜백 URL
+    <span class="hint">선택. 기기가 결과를 보고하면 서버가 이 URL을 GET으로 호출합니다. http/https만 되고 로컬·사설 주소는 거부됩니다.</span>
+    <input type="url" name="callback_url" value="{{ values.callbackUrl }}" placeholder="https://example.com/callback">
+  </label>
+  <div class="toolbar">
+    <span class="spacer"></span>
+    <a class="button" href="/admin/sms-requests">취소</a>
+    <button class="primary">보내기</button>
+  </div>
+</form>
+{% endblock content %}

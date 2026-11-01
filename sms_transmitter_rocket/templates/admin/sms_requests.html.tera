@@ -1,0 +1,89 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}SMS 요청{% endblock title %}
+{% block content %}
+<div class="toolbar">
+  <h1>SMS 요청</h1>
+  <span class="spacer"></span>
+  <a class="button primary" href="/admin/sms-requests/new">SMS 보내기</a>
+</div>
+<form class="toolbar" method="get" action="/admin/sms-requests">
+  <select name="status">
+    <option value=""{% if status == "" %} selected{% endif %}>전체 ({{ all_count }})</option>
+    <option value="SENDING"{% if status == "SENDING" %} selected{% endif %}>전송 중 ({{ status_counts.SENDING }})</option>
+    <option value="SENT"{% if status == "SENT" %} selected{% endif %}>성공 ({{ status_counts.SENT }})</option>
+    <option value="FAILED"{% if status == "FAILED" %} selected{% endif %}>실패 ({{ status_counts.FAILED }})</option>
+  </select>
+  <input name="q" value="{{ q }}" placeholder="ID, 수신 번호, 메시지" size="30">
+  <button>조회</button>
+</form>
+{% if requests %}
+<form id="delete-form" method="post" action="/admin/sms-requests/delete">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <input type="hidden" name="status" value="{{ status }}">
+  <input type="hidden" name="q" value="{{ q }}">
+  <input type="hidden" name="page" value="{{ page }}">
+  <div class="toolbar">
+    <button class="danger" id="delete-selected">선택 삭제</button>
+  </div>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th><input type="checkbox" id="select-all" title="이 페이지 전체 선택"></th><th>요청 시각</th><th>수신 번호</th><th>메시지</th><th>상태</th><th>발신 번호</th><th>콜백</th></tr></thead>
+    <tbody>
+    {% for r in requests %}
+      <tr>
+        <td><input type="checkbox" name="ids" value="{{ r.id }}" data-status="{{ r.status }}"></td>
+        <td class="nowrap"><a href="/admin/sms-requests/{{ r.id }}">{{ m::datetime(value=r.createdAt) }}</a></td>
+        <td class="mono">{{ r.phoneNumber }}</td>
+        <td>
+          {{ r.message | truncate(length=40) }}
+          {% if r.error %}<div class="text-err">{{ r.error | truncate(length=80) }}</div>{% endif %}
+        </td>
+        <td>{{ m::status_badge(status=r.status) }}</td>
+        <td class="mono">{{ r.sender }}</td>
+        <td>{% if r.callbackUrl %}{{ m::callback_code(code=r.callbackResponseCode) }}{% else %}<span class="muted">-</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="pagination">
+  {% if page > 1 %}<a class="button" href="?status={{ status | urlencode_strict }}&amp;q={{ q | urlencode_strict }}&amp;page={{ page - 1 }}">이전</a>{% endif %}
+  <span class="muted">{{ page }} / {{ pages }} 페이지 · {{ total }}건</span>
+  {% if page < pages %}<a class="button" href="?status={{ status | urlencode_strict }}&amp;q={{ q | urlencode_strict }}&amp;page={{ page + 1 }}">다음</a>{% endif %}
+</div>
+</form>
+<script>
+  (() => {
+    const form = document.getElementById('delete-form');
+    const boxes = [...form.querySelectorAll('input[name="ids"]')];
+    const selectAll = document.getElementById('select-all');
+    const button = document.getElementById('delete-selected');
+    const selected = () => boxes.filter((box) => box.checked);
+    const update = () => {
+      const count = selected().length;
+      button.disabled = count === 0;
+      button.textContent = count ? `선택 삭제 (${count})` : '선택 삭제';
+      selectAll.checked = count > 0 && count === boxes.length;
+      selectAll.indeterminate = count > 0 && count < boxes.length;
+    };
+    selectAll.addEventListener('change', () => {
+      boxes.forEach((box) => { box.checked = selectAll.checked; });
+      update();
+    });
+    boxes.forEach((box) => box.addEventListener('change', update));
+    form.addEventListener('submit', (event) => {
+      const sending = selected().filter((box) => box.dataset.status === 'SENDING').length;
+      let message = `선택한 요청 ${selected().length}건을 삭제할까요?`;
+      if (sending) {
+        message += `\n전송 중인 요청 ${sending}건이 포함되어 있습니다. 삭제하면 기기의 결과 보고가 실패합니다.`;
+      }
+      if (!confirm(message)) event.preventDefault();
+    });
+    update();
+  })();
+</script>
+{% else %}
+<p class="muted">조건에 맞는 요청이 없습니다.</p>
+{% endif %}
+{% endblock content %}

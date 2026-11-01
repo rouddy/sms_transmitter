@@ -1,0 +1,61 @@
+{% extends "admin/base" %}
+{% import "admin/macros" as m %}
+{% block title %}개요{% endblock title %}
+{% block content %}
+<h1>개요</h1>
+<div class="stats">
+  <div class="stat"><div class="muted">활성 기기</div><div class="value">{{ active_device_count }} <span class="muted">/ {{ device_count }}</span></div></div>
+  <div class="stat"><div class="muted">발송 가능 번호</div><div class="value">{{ sendable_count }} <span class="muted">/ {{ phone_numbers | length }}</span></div></div>
+  <div class="stat"><div class="muted">전송 중</div><div class="value">{{ status_counts.SENDING }}</div></div>
+  <div class="stat"><div class="muted">성공</div><div class="value">{{ status_counts.SENT }}</div></div>
+  <div class="stat"><div class="muted">실패</div><div class="value">{{ status_counts.FAILED }}</div></div>
+</div>
+
+<h2>발신 번호</h2>
+<span class="hint">최근 90일 안에 접속한 기기의 번호 중 일·월 한도가 남은 번호에서 발신 번호를 고릅니다. 한도 0은 무제한입니다.</span>
+{% if phone_numbers %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>번호</th><th>기기</th><th>오늘 발송</th><th>이번 달 발송</th><th>상태</th></tr></thead>
+    <tbody>
+    {% for pn in phone_numbers %}
+      <tr>
+        <td class="mono">{{ pn.phoneNumber }}</td>
+        <td><a href="/admin/devices#{{ pn.fcmTokenId }}">{{ pn.deviceInfo }}</a></td>
+        <td class="nowrap">{{ m::quota(sent=pn.dailySentCount, limit=pn.dailyLimit, remaining=pn.dailyRemaining) }}</td>
+        <td class="nowrap">{{ m::quota(sent=pn.monthlySentCount, limit=pn.monthlyLimit, remaining=pn.monthlyRemaining) }}</td>
+        <td>
+          {% if not pn.deviceActive %}<span class="badge off">비활성 기기</span>
+          {% elif not pn.hasQuota %}<span class="badge err">한도 소진</span>
+          {% else %}<span class="badge ok">발송 가능</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">등록된 번호가 없습니다.</p>
+{% endif %}
+
+<h2>최근 SMS 요청 <a class="small" href="/admin/sms-requests">전체 {{ request_count }}건 보기</a></h2>
+{% if recent_requests %}
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>요청 시각</th><th>수신 번호</th><th>메시지</th><th>상태</th></tr></thead>
+    <tbody>
+    {% for r in recent_requests %}
+      <tr>
+        <td class="nowrap"><a href="/admin/sms-requests/{{ r.id }}">{{ m::datetime(value=r.createdAt) }}</a></td>
+        <td class="mono">{{ r.phoneNumber }}</td>
+        <td>{{ r.message | truncate(length=40) }}</td>
+        <td>{{ m::status_badge(status=r.status) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">아직 요청이 없습니다.</p>
+{% endif %}
+{% endblock content %}

@@ -1,14 +1,14 @@
 # sms_transmitter_Android
 
-Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행하는 Android 앱입니다.
+An Android app that receives Firebase Cloud Messaging (FCM) data messages and does the following:
 
-- key `phoneNumber`: SMS 수신 번호
-- key `senderPhoneNumber`: 발신에 사용할 등록 번호
-- key `message`: SMS 본문으로 발송
-- key `requestId`: 서버로 결과 보고 시 사용
-- 번호별 한도를 설정하고 SMS 전송 결과를 SQLite에 저장한 뒤 메인 화면/오버레이에서 번호별 사용량 확인
+- key `phoneNumber`: SMS recipient number
+- key `senderPhoneNumber`: registered number to send from
+- key `message`: sent as the SMS body
+- key `requestId`: used when reporting the result to the server
+- Sets per-number limits, stores SMS send results in SQLite, and shows per-number usage on the main screen and overlay
 
-## FCM data payload 예시
+## Example FCM data payload
 
 ```json
 {
@@ -16,20 +16,20 @@ Firebase Cloud Messaging(FCM) data message를 수신해 다음 동작을 수행�
   "data": {
     "senderPhoneNumber": "01099998888",
     "phoneNumber": "01012345678",
-    "message": "테스트 메시지",
+    "message": "Test message",
     "requestId": "<UUID>"
   }
 }
 ```
 
-## 사전 준비
+## Prerequisites
 
-- `SEND_SMS` 권한 허용
-- 듀얼심 번호 자동 등록을 사용하려면 `READ_PHONE_NUMBERS` 권한 허용
-- Firebase Console에서 발급한 `google-services.json` 파일을 `app/google-services.json` 경로에 추가
-- Environment variable에 SMS_TRANSMITTER_BASE_URL와 SMS_TRANSMITTER_PORT를 설정(설정하지 않으면 ``http://{Build중인 pc의 ip}``, 54323으로 동작)
-- 서버 인증용 개인키 준비: `sms_transmitter_rocket/script/generate_keys.sh`로 생성한 `sms_transmitter_rocket/keys/private_key.pem`이 빌드 시 APK(BuildConfig)에 포함됩니다.
-  다른 위치의 키를 쓰려면 `SMS_TRANSMITTER_PRIVATE_KEY_PATH` 환경변수에 경로를 설정하세요. 키가 없으면 빌드가 실패합니다.
-  - 앱은 모든 서버 요청에 이 키로 서명한 JWT(`Authorization: Bearer ...`)를 붙입니다.
-  - 키가 포함된 APK는 키와 같은 권한을 가지므로 신뢰하는 기기에만 설치하고 공개 배포하지 마세요.
-  - 서버 키를 교체(`generate_keys.sh --rotate`)하면 APK를 다시 빌드해 설치해야 합니다.
+- Grant the `SEND_SMS` permission
+- To register dual-SIM numbers automatically, grant the `READ_PHONE_NUMBERS` permission
+- Add the `google-services.json` file issued from the Firebase Console at `app/google-services.json`
+- Set the SMS_TRANSMITTER_BASE_URL and SMS_TRANSMITTER_PORT environment variables (if unset, the app uses ``http://{IP of the building PC}`` and 54323)
+- Prepare the private key for server authentication: `sms_transmitter_rocket/keys/private_key.pem`, created by `sms_transmitter_rocket/script/generate_keys.sh`, is embedded in the APK (BuildConfig) at build time.
+  To use a key from another location, set its path in the `SMS_TRANSMITTER_PRIVATE_KEY_PATH` environment variable. The build fails if the key is missing.
+  - The app attaches a JWT signed with this key (`Authorization: Bearer ...`) to every server request.
+  - An APK containing the key has the same privileges as the key itself, so install it only on trusted devices and never distribute it publicly.
+  - If the server key is rotated (`generate_keys.sh --rotate`), rebuild and reinstall the APK.

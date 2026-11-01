@@ -1,6 +1,6 @@
 [package]
 name = "sms_transmitter_rocket"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 
 [dependencies]
@@ -21,3 +21,5 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
 async-trait = "0.1"
+rocket_dyn_templates = { version = "0.2", features = ["tera"] }
+rand = "0.8"

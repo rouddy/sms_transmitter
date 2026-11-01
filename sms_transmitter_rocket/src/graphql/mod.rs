@@ -201,4 +201,44 @@ mod tests {
         );
         assert_eq!(counts(&db).await, (0, 0));
     }
+
+    #[tokio::test]
+    async fn delete_sms_requests_removes_only_given_ids() {
+        let (schema, db) = setup().await;
+        register(&schema, "token-a", None).await;
+        let first = insert_request(&db).await;
+        let second = insert_request(&db).await;
+        let kept = insert_request(&db).await;
+        let unknown = Uuid::new_v4();
+
+        let response = schema
+            .execute(format!(
+                r#"mutation {{ deleteSmsRequests(ids: ["{first}", "{second}", "{first}", "{unknown}"]) }}"#
+            ))
+            .await;
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        assert_eq!(response.data.into_json().unwrap()["deleteSmsRequests"], 2);
+
+        let remaining = sms_request::Entity::find().all(&db).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, kept);
+    }
+
+    #[tokio::test]
+    async fn delete_sms_requests_rejects_invalid_ids_without_deleting() {
+        let (schema, db) = setup().await;
+        register(&schema, "token-a", None).await;
+        let request_id = insert_request(&db).await;
+
+        let response = schema
+            .execute(format!(
+                r#"mutation {{ deleteSmsRequests(ids: ["{request_id}", "not-a-uuid"]) }}"#
+            ))
+            .await;
+        assert!(!response.errors.is_empty());
+        assert_eq!(
+            status(&db, request_id).await,
+            sms_request::SmsStatus::Sending
+        );
+    }
 }
